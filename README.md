@@ -24,9 +24,20 @@
 ```bash
 git clone git@github.com:basketikun/chatgpt2api.git
 # 按需编辑 config.json 的密钥和 `refresh_account_interval_minute`
-# 也可以直接通过环境变量 CHATGPT2API_AUTH_KEY 覆盖 auth-key
+# 也可以通过环境变量覆盖同名配置项
 docker compose up -d
 ```
+
+支持通过环境变量覆盖 `config.json` 中的同名配置；环境变量非空时优先，未设置时回退到 `config.json`：
+
+```bash
+CHATGPT2API_AUTH_KEY
+CHATGPT2API_REFRESH_ACCOUNT_INTERVAL_MINUTE
+CHATGPT2API_PROXY
+CHATGPT2API_BASE_URL
+```
+
+使用 `docker compose` 时，可直接在当前 shell 导出这些变量，或写入同目录 `.env` 文件，`docker-compose.yml` 已将它们透传到容器内。
 
 ## 功能
 

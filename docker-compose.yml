@@ -5,6 +5,11 @@ services:
     restart: unless-stopped
     ports:
       - "3000:80"
+    environment:
+      CHATGPT2API_AUTH_KEY: ${CHATGPT2API_AUTH_KEY:-}
+      CHATGPT2API_REFRESH_ACCOUNT_INTERVAL_MINUTE: ${CHATGPT2API_REFRESH_ACCOUNT_INTERVAL_MINUTE:-}
+      CHATGPT2API_PROXY: ${CHATGPT2API_PROXY:-}
+      CHATGPT2API_BASE_URL: ${CHATGPT2API_BASE_URL:-}
     volumes:
       - ./data:/app/data
       - ./config.json:/app/config.json:ro

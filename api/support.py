@@ -6,6 +6,7 @@ from threading import Event, Thread
 from fastapi import HTTPException, Request
 
 from services.account_service import account_service
+from services.api_key_service import AuthPrincipal, api_key_service
 from services.config import config
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -19,10 +20,28 @@ def extract_bearer_token(authorization: str | None) -> str:
     return value.strip()
 
 
-def require_auth_key(authorization: str | None) -> None:
+def require_admin_key(authorization: str | None) -> None:
     auth_key = str(config.auth_key or "").strip()
     if not auth_key or extract_bearer_token(authorization) != auth_key:
         raise HTTPException(status_code=401, detail={"error": "authorization is invalid"})
+
+
+def require_auth_key(authorization: str | None) -> None:
+    require_admin_key(authorization)
+
+
+def require_client_principal(authorization: str | None) -> AuthPrincipal:
+    principal = api_key_service.authenticate(extract_bearer_token(authorization))
+    if principal is None:
+        raise HTTPException(status_code=401, detail={"error": "authorization is invalid"})
+    return principal
+
+
+def ensure_model_access(principal: AuthPrincipal, model: str | None) -> None:
+    model_id = str(model or "auto").strip() or "auto"
+    if principal.allows_model(model_id):
+        return
+    raise HTTPException(status_code=403, detail={"error": f"model '{model_id}' is not allowed for this api key"})
 
 
 def resolve_image_base_url(request: Request) -> str:

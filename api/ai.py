@@ -5,7 +5,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from api.support import raise_image_quota_error, require_auth_key, resolve_image_base_url
+from api.support import ensure_model_access, raise_image_quota_error, require_client_principal, resolve_image_base_url
 from services.account_service import account_service
 from services.chatgpt_service import ChatGPTService, ImageGenerationError
 from utils.helper import is_image_chat_request, sse_json_stream
@@ -15,6 +15,7 @@ class ImageGenerationRequest(BaseModel):
     prompt: str = Field(..., min_length=1)
     model: str = "gpt-image-2"
     n: int = Field(default=1, ge=1, le=4)
+    size: str | None = None
     response_format: str = "b64_json"
     history_disabled: bool = True
     stream: bool | None = None
@@ -44,11 +45,20 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
 
     @router.get("/v1/models")
     async def list_models(authorization: str | None = Header(default=None)):
-        require_auth_key(authorization)
+        principal = require_client_principal(authorization)
         try:
-            return await run_in_threadpool(chatgpt_service.list_models)
+            result = await run_in_threadpool(chatgpt_service.list_models)
         except Exception as exc:
             raise HTTPException(status_code=502, detail={"error": str(exc)}) from exc
+        if principal.is_admin or not principal.allowed_models:
+            return result
+        data = result.get("data")
+        if isinstance(data, list):
+            result["data"] = [
+                item for item in data
+                if isinstance(item, dict) and str(item.get("id") or "").strip() in principal.allowed_models
+            ]
+        return result
 
     @router.post("/v1/images/generations")
     async def generate_images(
@@ -56,7 +66,8 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
             request: Request,
             authorization: str | None = Header(default=None),
     ):
-        require_auth_key(authorization)
+        principal = require_client_principal(authorization)
+        ensure_model_access(principal, body.model)
         base_url = resolve_image_base_url(request)
         if body.stream:
             try:
@@ -66,14 +77,14 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
             return StreamingResponse(
                 sse_json_stream(
                     chatgpt_service.stream_image_generation(
-                        body.prompt, body.model, body.n, body.response_format, base_url
+                        body.prompt, body.model, body.n, body.size, body.response_format, base_url
                     )
                 ),
                 media_type="text/event-stream",
             )
         try:
             return await run_in_threadpool(
-                chatgpt_service.generate_with_pool, body.prompt, body.model, body.n, body.response_format, base_url
+                chatgpt_service.generate_with_pool, body.prompt, body.model, body.n, body.size, body.response_format, base_url
             )
         except ImageGenerationError as exc:
             raise_image_quota_error(exc)
@@ -87,10 +98,12 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
             prompt: str = Form(...),
             model: str = Form(default="gpt-image-2"),
             n: int = Form(default=1),
+            size: str | None = Form(default=None),
             response_format: str = Form(default="b64_json"),
             stream: bool | None = Form(default=None),
     ):
-        require_auth_key(authorization)
+        principal = require_client_principal(authorization)
+        ensure_model_access(principal, model)
         if n < 1 or n > 4:
             raise HTTPException(status_code=400, detail={"error": "n must be between 1 and 4"})
         uploads = [*(image or []), *(image_list or [])]
@@ -107,20 +120,21 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
             if not account_service.has_available_account():
                 raise_image_quota_error(RuntimeError("no available image quota"))
             return StreamingResponse(
-                sse_json_stream(chatgpt_service.stream_image_edit(prompt, images, model, n, response_format, base_url)),
+                sse_json_stream(chatgpt_service.stream_image_edit(prompt, images, model, n, size, response_format, base_url)),
                 media_type="text/event-stream",
             )
         try:
             return await run_in_threadpool(
-                chatgpt_service.edit_with_pool, prompt, images, model, n, response_format, base_url
+                chatgpt_service.edit_with_pool, prompt, images, model, n, size, response_format, base_url
             )
         except ImageGenerationError as exc:
             raise_image_quota_error(exc)
 
     @router.post("/v1/chat/completions")
     async def create_chat_completion(body: ChatCompletionRequest, authorization: str | None = Header(default=None)):
-        require_auth_key(authorization)
+        principal = require_client_principal(authorization)
         payload = body.model_dump(mode="python")
+        ensure_model_access(principal, payload.get("model") or ("gpt-image-2" if is_image_chat_request(payload) else "auto"))
         if bool(payload.get("stream")):
             if is_image_chat_request(payload):
                 try:
@@ -135,8 +149,10 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
 
     @router.post("/v1/responses")
     async def create_response(body: ResponseCreateRequest, authorization: str | None = Header(default=None)):
-        require_auth_key(authorization)
+        principal = require_client_principal(authorization)
         payload = body.model_dump(mode="python")
+        default_model = "gpt-image-2" if (payload.get("tools") or payload.get("tool_choice")) else "auto"
+        ensure_model_access(principal, payload.get("model") or default_model)
         if bool(payload.get("stream")):
             return StreamingResponse(
                 sse_json_stream(chatgpt_service.stream_response(payload)),

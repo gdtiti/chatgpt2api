@@ -16,3 +16,4 @@ edit
 docker-compose-local.yml
 
 .claude/settings.local.json
+.ace-tool/

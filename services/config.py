@@ -12,12 +12,19 @@ CONFIG_FILE = BASE_DIR / "config.json"
 VERSION_FILE = BASE_DIR / "VERSION"
 DEFAULT_REFRESH_ACCOUNT_INTERVAL_MINUTE = 5
 DEFAULT_LISTEN_PORT = 80
+DEFAULT_IMAGE_FAILURE_STRATEGY = "fail"
+DEFAULT_IMAGE_RETRY_COUNT = 0
+DEFAULT_IMAGE_PARALLEL_ATTEMPTS = 1
 ENV_AUTH_KEY = "CHATGPT2API_AUTH_KEY"
 ENV_REFRESH_ACCOUNT_INTERVAL_MINUTE = "CHATGPT2API_REFRESH_ACCOUNT_INTERVAL_MINUTE"
 ENV_PROXY = "CHATGPT2API_PROXY"
 ENV_BASE_URL = "CHATGPT2API_BASE_URL"
 ENV_PORT = "CHATGPT2API_PORT"
 ENV_PLATFORM_PORT = "PORT"
+ENV_IMAGE_FAILURE_STRATEGY = "CHATGPT2API_IMAGE_FAILURE_STRATEGY"
+ENV_IMAGE_RETRY_COUNT = "CHATGPT2API_IMAGE_RETRY_COUNT"
+ENV_IMAGE_PARALLEL_ATTEMPTS = "CHATGPT2API_IMAGE_PARALLEL_ATTEMPTS"
+ENV_IMAGE_PLACEHOLDER_PATH = "CHATGPT2API_IMAGE_PLACEHOLDER_PATH"
 
 
 @dataclass(frozen=True)
@@ -65,6 +72,47 @@ def _resolve_int_setting(raw_config: dict[str, object], key: str, env_name: str,
     if file_value is not None:
         return file_value
     return default
+
+
+def _resolve_bounded_int_setting(
+        raw_config: dict[str, object],
+        key: str,
+        env_name: str,
+        default: int,
+        *,
+        min_value: int,
+        max_value: int,
+) -> int:
+    value = _resolve_int_setting(raw_config, key, env_name, default)
+    if value < min_value or value > max_value:
+        return default
+    return value
+
+
+def _resolve_choice_setting(
+        raw_config: dict[str, object],
+        key: str,
+        env_name: str,
+        default: str,
+        choices: set[str],
+) -> str:
+    env_value = _read_env_text(env_name).lower()
+    if env_value in choices:
+        return env_value
+    file_value = _normalize_text(raw_config.get(key)).lower()
+    if file_value in choices:
+        return file_value
+    return default
+
+
+def _resolve_path_setting(raw_config: dict[str, object], key: str, env_name: str) -> Path | None:
+    raw_value = _resolve_text_setting(raw_config, key, env_name)
+    if not raw_value:
+        return None
+    candidate = Path(raw_value)
+    if not candidate.is_absolute():
+        candidate = BASE_DIR / candidate
+    return candidate
 
 
 def _parse_port(value: object) -> int | None:
@@ -170,12 +218,70 @@ class ConfigStore:
         return path
 
     @property
+    def image_placeholder_dir(self) -> Path:
+        path = DATA_DIR / "placeholders"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @property
     def base_url(self) -> str:
         return _resolve_text_setting(self.data, "base_url", ENV_BASE_URL).rstrip("/")
 
     @property
     def listen_port(self) -> int:
         return _resolve_port_setting(self.data)
+
+    @property
+    def image_failure_strategy(self) -> str:
+        return _resolve_choice_setting(
+            self.data,
+            "image_failure_strategy",
+            ENV_IMAGE_FAILURE_STRATEGY,
+            DEFAULT_IMAGE_FAILURE_STRATEGY,
+            {"fail", "retry", "placeholder"},
+        )
+
+    @property
+    def image_retry_count(self) -> int:
+        return _resolve_bounded_int_setting(
+            self.data,
+            "image_retry_count",
+            ENV_IMAGE_RETRY_COUNT,
+            DEFAULT_IMAGE_RETRY_COUNT,
+            min_value=0,
+            max_value=5,
+        )
+
+    @property
+    def image_parallel_attempts(self) -> int:
+        return _resolve_bounded_int_setting(
+            self.data,
+            "image_parallel_attempts",
+            ENV_IMAGE_PARALLEL_ATTEMPTS,
+            DEFAULT_IMAGE_PARALLEL_ATTEMPTS,
+            min_value=1,
+            max_value=8,
+        )
+
+    @property
+    def image_placeholder_path(self) -> Path | None:
+        return _resolve_path_setting(self.data, "image_placeholder_path", ENV_IMAGE_PLACEHOLDER_PATH)
+
+    @property
+    def api_keys_file(self) -> Path:
+        return DATA_DIR / "api_keys.json"
+
+    @property
+    def jobs_dir(self) -> Path:
+        path = DATA_DIR / "jobs"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @property
+    def job_results_dir(self) -> Path:
+        path = DATA_DIR / "job_results"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
 
     @property
     def app_version(self) -> str:

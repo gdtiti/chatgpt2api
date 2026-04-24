@@ -7,7 +7,10 @@ from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from typing import Any, Sequence
 
-import pybase64
+try:
+    import pybase64  # type: ignore[import-not-found]
+except ModuleNotFoundError:
+    import base64 as pybase64
 
 DEFAULT_POW_SCRIPT = "https://chatgpt.com/backend-api/sentinel/sdk.js"
 from utils.helper import new_uuid

@@ -3,5 +3,9 @@
   "port": 80,
   "refresh_account_interval_minute": 60,
   "proxy": "",
-  "base_url": ""
+  "base_url": "",
+  "image_failure_strategy": "fail",
+  "image_retry_count": 0,
+  "image_parallel_attempts": 1,
+  "image_placeholder_path": ""
 }

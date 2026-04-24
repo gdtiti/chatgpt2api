@@ -36,6 +36,10 @@ CHATGPT2API_PORT
 CHATGPT2API_REFRESH_ACCOUNT_INTERVAL_MINUTE
 CHATGPT2API_PROXY
 CHATGPT2API_BASE_URL
+CHATGPT2API_IMAGE_FAILURE_STRATEGY
+CHATGPT2API_IMAGE_RETRY_COUNT
+CHATGPT2API_IMAGE_PARALLEL_ATTEMPTS
+CHATGPT2API_IMAGE_PLACEHOLDER_PATH
 ```
 
 启动端口额外支持通用环境变量 `PORT`。优先级是：`CHATGPT2API_PORT` > `PORT` > `config.json` 中的 `port` > 默认 `80`。
@@ -50,9 +54,15 @@ CHATGPT2API_BASE_URL
 - 兼容 `POST /v1/images/edits` 图片编辑接口
 - 兼容面向图片场景的 `POST /v1/chat/completions`
 - 兼容面向图片场景的 `POST /v1/responses`
+- 新增 `GET /api/catalog/models` 能力化模型目录接口
+- 新增 `/api/async/jobs*` 异步任务接口，支持提交、查询、取结果与 SSE 事件流订阅
+- 新增 `/api/admin/keys*` API Key 管理接口，区分管理密钥与业务调用密钥
 - `GET /v1/models` 返回 `gpt-image-2`、`codex-gpt-image-2`、`auto`、`gpt-5`、`gpt-5-1`、`gpt-5-2`、`gpt-5-3`、`gpt-5-3-mini`、
   `gpt-5-mini`
 - 支持通过 `n` 返回多张生成结果
+- 图片生成与编辑支持 `size=1:1/16:9/9:16/4:3/3:4`
+- 图片生成支持后台配置失败策略：`fail / retry / placeholder`
+- 图片生成支持后台配置并发尝试数；单次请求可并发多个上游尝试并返回首个成功结果
 - 支持 Codex 中的画图接口逆向，仅 `Plus` / `Team` / `Pro` 订阅可用，模型别名为 `codex-gpt-image-2`，如有需要可自行在其他场景映射回 `gpt-image-2`，用于和官网画图区分；也就意味着同一账号会同时有官网和 Codex 两份生图额度
 
 ### 在线画图功能
@@ -104,10 +114,16 @@ New Api 接入：
 
 ## API
 
-所有 AI 接口都需要请求头：
+管理接口继续使用 `config.json` 或 `CHATGPT2API_AUTH_KEY` 中的 `auth-key`：
 
 ```http
 Authorization: Bearer <auth-key>
+```
+
+业务接口默认使用 `/api/admin/keys` 创建出的 client key：
+
+```http
+Authorization: Bearer <client-api-key>
 ```
 
 <details>
@@ -135,6 +151,49 @@ curl http://localhost:8000/v1/models \
 </details>
 
 <details>
+<summary><code>GET /api/catalog/models</code></summary>
+<br>
+
+返回能力化模型目录，会在 `/v1/models` 的基础上补充每个模型可用的接口能力。
+
+图片模型还会额外带出 `image_options`，用于表达当前支持的 `size_choices`、默认尺寸和参考图能力。
+
+</details>
+
+<details>
+<summary><code>POST /api/admin/keys</code> / <code>GET /api/admin/keys</code></summary>
+<br>
+
+用于创建、查询、启停、轮换 client API key。创建和轮换时仅返回一次明文密钥，落盘只保存 hash、前缀和元数据。
+
+</details>
+
+<details>
+<summary><code>POST /api/async/jobs</code> / <code>GET /api/async/jobs/{job_id}/events</code></summary>
+<br>
+
+异步任务接口支持 `chat.completions`、`responses`、`images.generations`、`images.edits` 四类任务：
+
+```bash
+curl http://localhost:8000/api/async/jobs \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <client-api-key>" \
+  -d '{
+    "type": "chat.completions",
+    "payload": {
+      "model": "auto",
+      "messages": [
+        {"role": "user", "content": "hello"}
+      ]
+    }
+  }'
+```
+
+图片类异步任务的 `payload` 也支持 `size`，例如 `4:3` 或 `3:4`。任务运行中可订阅 `GET /api/async/jobs/{job_id}/events`。服务会持续发送 `event: ping` 保持 SSE 连接，任务完成后推送 `event: result` 或 `event: error`。
+
+</details>
+
+<details>
 <summary><code>POST /v1/images/generations</code></summary>
 <br>
 
@@ -148,6 +207,7 @@ curl http://localhost:8000/v1/images/generations \
     "model": "gpt-image-2",
     "prompt": "一只漂浮在太空里的猫",
     "n": 1,
+    "size": "4:3",
     "response_format": "b64_json"
   }'
 ```
@@ -161,6 +221,7 @@ curl http://localhost:8000/v1/images/generations \
 | `model`           | 图片模型，当前可用值以 `/v1/models` 返回结果为准，推荐使用 `gpt-image-2` |
 | `prompt`          | 图片生成提示词                                            |
 | `n`               | 生成数量，当前后端限制为 `1-4`                                 |
+| `size`            | 可选尺寸/比例，支持 `1:1`、`16:9`、`9:16`、`4:3`、`3:4`         |
 | `response_format` | 当前请求模型中包含该字段，默认值为 `b64_json`                       |
 
 <br>
@@ -179,6 +240,7 @@ curl http://localhost:8000/v1/images/edits \
   -F "model=gpt-image-2" \
   -F "prompt=把这张图改成赛博朋克夜景风格" \
   -F "n=1" \
+  -F "size=9:16" \
   -F "image=@./input.png"
 ```
 
@@ -191,6 +253,7 @@ curl http://localhost:8000/v1/images/edits \
 | `model`  | 图片模型， `gpt-image-2`                 |
 | `prompt` | 图片编辑提示词                             |
 | `n`      | 生成数量，当前后端限制为 `1-4`                  |
+| `size`   | 可选尺寸/比例，支持 `1:1`、`16:9`、`9:16`、`4:3`、`3:4` |
 | `image`  | 需要编辑的图片文件，使用 multipart/form-data 上传 |
 
 <br>

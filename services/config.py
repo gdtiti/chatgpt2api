@@ -11,16 +11,20 @@ DATA_DIR = BASE_DIR / "data"
 CONFIG_FILE = BASE_DIR / "config.json"
 VERSION_FILE = BASE_DIR / "VERSION"
 DEFAULT_REFRESH_ACCOUNT_INTERVAL_MINUTE = 5
+DEFAULT_LISTEN_PORT = 80
 ENV_AUTH_KEY = "CHATGPT2API_AUTH_KEY"
 ENV_REFRESH_ACCOUNT_INTERVAL_MINUTE = "CHATGPT2API_REFRESH_ACCOUNT_INTERVAL_MINUTE"
 ENV_PROXY = "CHATGPT2API_PROXY"
 ENV_BASE_URL = "CHATGPT2API_BASE_URL"
+ENV_PORT = "CHATGPT2API_PORT"
+ENV_PLATFORM_PORT = "PORT"
 
 
 @dataclass(frozen=True)
 class LoadedSettings:
     auth_key: str
     refresh_account_interval_minute: int
+    port: int
 
 
 def _normalize_auth_key(value: object) -> str:
@@ -63,6 +67,24 @@ def _resolve_int_setting(raw_config: dict[str, object], key: str, env_name: str,
     return default
 
 
+def _parse_port(value: object) -> int | None:
+    port = _parse_int(value)
+    if port is None or not 1 <= port <= 65535:
+        return None
+    return port
+
+
+def _resolve_port_setting(raw_config: dict[str, object], key: str = "port") -> int:
+    for env_name in (ENV_PORT, ENV_PLATFORM_PORT):
+        port = _parse_port(os.getenv(env_name))
+        if port is not None:
+            return port
+    file_port = _parse_port(raw_config.get(key))
+    if file_port is not None:
+        return file_port
+    return DEFAULT_LISTEN_PORT
+
+
 def _read_json_object(path: Path, *, name: str) -> dict[str, object]:
     if not path.exists():
         return {}
@@ -94,10 +116,12 @@ def _load_settings() -> LoadedSettings:
         ENV_REFRESH_ACCOUNT_INTERVAL_MINUTE,
         DEFAULT_REFRESH_ACCOUNT_INTERVAL_MINUTE,
     )
+    port = _resolve_port_setting(raw_config)
 
     return LoadedSettings(
         auth_key=auth_key,
         refresh_account_interval_minute=refresh_interval,
+        port=port,
     )
 
 
@@ -148,6 +172,10 @@ class ConfigStore:
     @property
     def base_url(self) -> str:
         return _resolve_text_setting(self.data, "base_url", ENV_BASE_URL).rstrip("/")
+
+    @property
+    def listen_port(self) -> int:
+        return _resolve_port_setting(self.data)
 
     @property
     def app_version(self) -> str:

@@ -4,12 +4,13 @@ services:
     container_name: chatgpt2api
     restart: unless-stopped
     ports:
-      - "3000:80"
+      - "${CHATGPT2API_HOST_PORT:-3000}:${CHATGPT2API_PORT:-80}"
     environment:
       CHATGPT2API_AUTH_KEY: ${CHATGPT2API_AUTH_KEY:-}
       CHATGPT2API_REFRESH_ACCOUNT_INTERVAL_MINUTE: ${CHATGPT2API_REFRESH_ACCOUNT_INTERVAL_MINUTE:-}
       CHATGPT2API_PROXY: ${CHATGPT2API_PROXY:-}
       CHATGPT2API_BASE_URL: ${CHATGPT2API_BASE_URL:-}
+      CHATGPT2API_PORT: ${CHATGPT2API_PORT:-}
     volumes:
       - ./data:/app/data
       - ./config.json:/app/config.json:ro

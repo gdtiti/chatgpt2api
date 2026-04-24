@@ -49,6 +49,7 @@ class ConfigLoadingTests(unittest.TestCase):
 
                 self.assertEqual(settings.auth_key, os_auth_key)
                 self.assertEqual(settings.refresh_account_interval_minute, 5)
+                self.assertEqual(settings.port, 80)
             finally:
                 module.BASE_DIR = old_base_dir
                 module.DATA_DIR = old_data_dir
@@ -65,6 +66,7 @@ class ConfigLoadingTests(unittest.TestCase):
                 json.dumps(
                     {
                         "auth-key": "file-auth",
+                        "port": 8080,
                         "refresh_account_interval_minute": 60,
                         "proxy": "http://file-proxy:8080",
                         "base_url": "https://file.example.com/",
@@ -76,6 +78,7 @@ class ConfigLoadingTests(unittest.TestCase):
             module = self.config_module
             env_names = {
                 "CHATGPT2API_AUTH_KEY": "env-auth",
+                "CHATGPT2API_PORT": "9090",
                 "CHATGPT2API_REFRESH_ACCOUNT_INTERVAL_MINUTE": "15",
                 "CHATGPT2API_PROXY": "http://env-proxy:9090",
                 "CHATGPT2API_BASE_URL": "https://env.example.com/",
@@ -88,6 +91,7 @@ class ConfigLoadingTests(unittest.TestCase):
                 store = module.ConfigStore(config_file)
 
                 self.assertEqual(store.auth_key, "env-auth")
+                self.assertEqual(store.listen_port, 9090)
                 self.assertEqual(store.refresh_account_interval_minute, 15)
                 self.assertEqual(store.get_proxy_settings(), "http://env-proxy:9090")
                 self.assertEqual(store.base_url, "https://env.example.com")
@@ -105,6 +109,7 @@ class ConfigLoadingTests(unittest.TestCase):
                 json.dumps(
                     {
                         "auth-key": "file-auth",
+                        "port": 8080,
                         "refresh_account_interval_minute": 60,
                         "proxy": "http://file-proxy:8080",
                         "base_url": "https://file.example.com/",
@@ -116,6 +121,8 @@ class ConfigLoadingTests(unittest.TestCase):
             module = self.config_module
             env_names = {
                 "CHATGPT2API_AUTH_KEY": "   ",
+                "CHATGPT2API_PORT": "70000",
+                "PORT": "7070",
                 "CHATGPT2API_REFRESH_ACCOUNT_INTERVAL_MINUTE": "invalid",
                 "CHATGPT2API_PROXY": " ",
                 "CHATGPT2API_BASE_URL": "",
@@ -128,9 +135,43 @@ class ConfigLoadingTests(unittest.TestCase):
                 store = module.ConfigStore(config_file)
 
                 self.assertEqual(store.auth_key, "file-auth")
+                self.assertEqual(store.listen_port, 7070)
                 self.assertEqual(store.refresh_account_interval_minute, 60)
                 self.assertEqual(store.get_proxy_settings(), "http://file-proxy:8080")
                 self.assertEqual(store.base_url, "https://file.example.com")
+            finally:
+                for name, value in old_env.items():
+                    if value is None:
+                        module.os.environ.pop(name, None)
+                    else:
+                        module.os.environ[name] = value
+
+    def test_config_store_falls_back_to_file_port_when_env_port_is_missing_or_invalid(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_file = Path(tmp_dir) / "config.json"
+            config_file.write_text(
+                json.dumps(
+                    {
+                        "auth-key": "file-auth",
+                        "port": 8080,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            module = self.config_module
+            env_names = {
+                "CHATGPT2API_PORT": "0",
+                "PORT": "invalid",
+            }
+            old_env = {name: module.os.environ.get(name) for name in env_names}
+            try:
+                for name, value in env_names.items():
+                    module.os.environ[name] = value
+
+                store = module.ConfigStore(config_file)
+
+                self.assertEqual(store.listen_port, 8080)
             finally:
                 for name, value in old_env.items():
                     if value is None:

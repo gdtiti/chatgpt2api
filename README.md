@@ -23,7 +23,7 @@
 
 ```bash
 git clone git@github.com:basketikun/chatgpt2api.git
-# 按需编辑 config.json 的密钥和 `refresh_account_interval_minute`
+# 按需编辑 config.json 的密钥、`port` 和 `refresh_account_interval_minute`
 # 也可以通过环境变量覆盖同名配置项
 docker compose up -d
 ```
@@ -32,12 +32,15 @@ docker compose up -d
 
 ```bash
 CHATGPT2API_AUTH_KEY
+CHATGPT2API_PORT
 CHATGPT2API_REFRESH_ACCOUNT_INTERVAL_MINUTE
 CHATGPT2API_PROXY
 CHATGPT2API_BASE_URL
 ```
 
-使用 `docker compose` 时，可直接在当前 shell 导出这些变量，或写入同目录 `.env` 文件，`docker-compose.yml` 已将它们透传到容器内。
+启动端口额外支持通用环境变量 `PORT`。优先级是：`CHATGPT2API_PORT` > `PORT` > `config.json` 中的 `port` > 默认 `80`。
+
+使用 `docker compose` 时，可直接在当前 shell 导出这些变量，或写入同目录 `.env` 文件，`docker-compose.yml` 已将它们透传到容器内。若同时调整容器监听端口，可再设置 `CHATGPT2API_HOST_PORT` 修改宿主机映射端口。
 
 ## 功能
 

@@ -7,7 +7,7 @@ import { ImageComposer } from "@/app/image/components/image-composer";
 import { ImageResults, type ImageLightboxItem } from "@/app/image/components/image-results";
 import { ImageSidebar } from "@/app/image/components/image-sidebar";
 import { ImageLightbox } from "@/components/image-lightbox";
-import { editImage, fetchAccounts, generateImage, type Account } from "@/lib/api";
+import { editImage, fetchAccounts, generateImage, type Account, type ImageSizeOption } from "@/lib/api";
 import {
   clearImageConversations,
   deleteImageConversation,
@@ -170,6 +170,7 @@ export default function ImagePage() {
 
   const [imagePrompt, setImagePrompt] = useState("");
   const [imageCount, setImageCount] = useState("1");
+  const [imageSize, setImageSize] = useState<ImageSizeOption>("1:1");
   const [imageMode, setImageMode] = useState<ImageConversationMode>("generate");
   const [referenceImageFiles, setReferenceImageFiles] = useState<File[]>([]);
   const [referenceImages, setReferenceImages] = useState<StoredReferenceImage[]>([]);
@@ -324,6 +325,7 @@ export default function ImagePage() {
   const clearComposerInputs = useCallback(() => {
     setImagePrompt("");
     setImageCount("1");
+    setImageSize("1:1");
     setReferenceImageFiles([]);
     setReferenceImages([]);
     if (fileInputRef.current) {
@@ -524,8 +526,8 @@ export default function ImagePage() {
           try {
             const data =
               queuedTurn.mode === "edit"
-                ? await editImage(referenceFiles, queuedTurn.prompt)
-                : await generateImage(queuedTurn.prompt);
+                ? await editImage(referenceFiles, queuedTurn.prompt, { size: queuedTurn.size || "1:1" })
+                : await generateImage(queuedTurn.prompt, { size: queuedTurn.size || "1:1" });
             const first = data.data?.[0];
             if (!first?.b64_json) {
               throw new Error("未返回图片数据");
@@ -689,6 +691,7 @@ export default function ImagePage() {
       prompt,
       model: "auto",
       mode: imageMode,
+      size: imageSize,
       referenceImages: imageMode === "edit" ? referenceImages : [],
       count: parsedCount,
       images: Array.from({ length: parsedCount }, (_, index) => ({
@@ -760,6 +763,7 @@ export default function ImagePage() {
             mode={imageMode}
             prompt={imagePrompt}
             imageCount={imageCount}
+            imageSize={imageSize}
             availableQuota={availableQuota}
             activeTaskCount={activeTaskCount}
             referenceImages={referenceImages}
@@ -768,6 +772,7 @@ export default function ImagePage() {
             onModeChange={setImageMode}
             onPromptChange={setImagePrompt}
             onImageCountChange={setImageCount}
+            onImageSizeChange={setImageSize}
             onSubmit={handleSubmit}
             onPickReferenceImage={() => fileInputRef.current?.click()}
             onReferenceImageChange={handleReferenceImageChange}

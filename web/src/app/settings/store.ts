@@ -25,9 +25,15 @@ function normalizeConfig(config: SettingsConfig): SettingsConfig {
   return {
     ...config,
     "auth-key": typeof config["auth-key"] === "string" ? config["auth-key"] : "",
+    port: Number(config.port || 80),
     refresh_account_interval_minute: Number(config.refresh_account_interval_minute || 5),
     proxy: typeof config.proxy === "string" ? config.proxy : "",
     base_url: typeof config.base_url === "string" ? config.base_url : "",
+    image_failure_strategy:
+      typeof config.image_failure_strategy === "string" ? config.image_failure_strategy : "fail",
+    image_retry_count: Number(config.image_retry_count || 0),
+    image_parallel_attempts: Number(config.image_parallel_attempts || 1),
+    image_placeholder_path: typeof config.image_placeholder_path === "string" ? config.image_placeholder_path : "",
   };
 }
 
@@ -82,6 +88,11 @@ type SettingsStore = {
   setRefreshAccountIntervalMinute: (value: string) => void;
   setProxy: (value: string) => void;
   setBaseUrl: (value: string) => void;
+  setPort: (value: string) => void;
+  setImageFailureStrategy: (value: string) => void;
+  setImageRetryCount: (value: string) => void;
+  setImageParallelAttempts: (value: string) => void;
+  setImagePlaceholderPath: (value: string) => void;
 
   loadPools: (silent?: boolean) => Promise<void>;
   openAddDialog: () => void;
@@ -160,9 +171,14 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       const data = await updateSettingsConfig({
         ...config,
         "auth-key": String(config["auth-key"] || "").trim(),
+        port: Math.max(1, Math.min(65535, Number(config.port) || 80)),
         refresh_account_interval_minute: Math.max(1, Number(config.refresh_account_interval_minute) || 1),
         proxy: config.proxy.trim(),
         base_url: String(config.base_url || "").trim(),
+        image_failure_strategy: String(config.image_failure_strategy || "fail").trim() || "fail",
+        image_retry_count: Math.max(0, Math.min(5, Number(config.image_retry_count) || 0)),
+        image_parallel_attempts: Math.max(1, Math.min(8, Number(config.image_parallel_attempts) || 1)),
+        image_placeholder_path: String(config.image_placeholder_path || "").trim(),
       });
       set({
         config: normalizeConfig(data.config),
@@ -203,6 +219,20 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     });
   },
 
+  setPort: (value) => {
+    set((state) => {
+      if (!state.config) {
+        return {};
+      }
+      return {
+        config: {
+          ...state.config,
+          port: value,
+        },
+      };
+    });
+  },
+
   setProxy: (value) => {
     set((state) => {
       if (!state.config) {
@@ -226,6 +256,62 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         config: {
           ...state.config,
           base_url: value,
+        },
+      };
+    });
+  },
+
+  setImageFailureStrategy: (value) => {
+    set((state) => {
+      if (!state.config) {
+        return {};
+      }
+      return {
+        config: {
+          ...state.config,
+          image_failure_strategy: value,
+        },
+      };
+    });
+  },
+
+  setImageRetryCount: (value) => {
+    set((state) => {
+      if (!state.config) {
+        return {};
+      }
+      return {
+        config: {
+          ...state.config,
+          image_retry_count: value,
+        },
+      };
+    });
+  },
+
+  setImageParallelAttempts: (value) => {
+    set((state) => {
+      if (!state.config) {
+        return {};
+      }
+      return {
+        config: {
+          ...state.config,
+          image_parallel_attempts: value,
+        },
+      };
+    });
+  },
+
+  setImagePlaceholderPath: (value) => {
+    set((state) => {
+      if (!state.config) {
+        return {};
+      }
+      return {
+        config: {
+          ...state.config,
+          image_placeholder_path: value,
         },
       };
     });

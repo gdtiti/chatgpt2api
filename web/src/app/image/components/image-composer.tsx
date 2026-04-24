@@ -3,9 +3,12 @@ import { ArrowUp, ImagePlus, LoaderCircle, X } from "lucide-react";
 import { useMemo, useState, type ClipboardEvent, type RefObject } from "react";
 
 import { ImageLightbox } from "@/components/image-lightbox";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { IMAGE_SIZE_OPTIONS, type ImageSizeOption } from "@/lib/api";
 import type { ImageConversationMode } from "@/store/image-conversations";
 import { cn } from "@/lib/utils";
 
@@ -13,6 +16,7 @@ type ImageComposerProps = {
   mode: ImageConversationMode;
   prompt: string;
   imageCount: string;
+  imageSize: ImageSizeOption;
   availableQuota: string;
   activeTaskCount: number;
   referenceImages: Array<{ name: string; dataUrl: string }>;
@@ -21,6 +25,7 @@ type ImageComposerProps = {
   onModeChange: (value: ImageConversationMode) => void;
   onPromptChange: (value: string) => void;
   onImageCountChange: (value: string) => void;
+  onImageSizeChange: (value: ImageSizeOption) => void;
   onSubmit: () => void | Promise<void>;
   onPickReferenceImage: () => void;
   onReferenceImageChange: (files: File[]) => void | Promise<void>;
@@ -31,6 +36,7 @@ export function ImageComposer({
   mode,
   prompt,
   imageCount,
+  imageSize,
   availableQuota,
   activeTaskCount,
   referenceImages,
@@ -39,6 +45,7 @@ export function ImageComposer({
   onModeChange,
   onPromptChange,
   onImageCountChange,
+  onImageSizeChange,
   onSubmit,
   onPickReferenceImage,
   onReferenceImageChange,
@@ -175,6 +182,27 @@ export function ImageComposer({
                       onChange={(event) => onImageCountChange(event.target.value)}
                       className="h-8 w-[64px] border-0 bg-transparent px-0 text-center text-sm font-medium text-stone-700 shadow-none focus-visible:ring-0"
                     />
+                  </div>
+                  <div className="flex items-center gap-2 rounded-full border border-stone-200 bg-white px-3 py-1">
+                    <span className="text-sm font-medium text-stone-700">比例</span>
+                    <Select value={imageSize} onValueChange={(value) => onImageSizeChange(value as ImageSizeOption)}>
+                      <SelectTrigger className="h-8 w-[104px] rounded-full border-0 bg-transparent px-0 text-sm font-medium text-stone-700 shadow-none focus-visible:ring-0">
+                        <SelectValue placeholder="1:1" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {IMAGE_SIZE_OPTIONS.map((option) => (
+                          <SelectItem key={option} value={option}>
+                            {option}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex items-center gap-2 rounded-full border border-dashed border-stone-200 bg-stone-50 px-3 py-2">
+                    <span className="text-sm font-medium text-stone-700">质量</span>
+                    <Badge variant="outline" className="rounded-full border-stone-200 bg-white text-stone-500">
+                      暂未支持
+                    </Badge>
                   </div>
                   <div className="flex items-center gap-2">
                     <ModeButton active={mode === "generate"} onClick={() => onModeChange("generate")}>

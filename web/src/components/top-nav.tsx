@@ -12,6 +12,7 @@ const navItems = [
   { href: "/image", label: "画图" },
   { href: "/accounts", label: "号池管理" },
   { href: "/settings", label: "设置" },
+  { href: "/docs", label: "API 说明" },
 ];
 
 export function TopNav() {

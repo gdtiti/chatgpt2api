@@ -2,7 +2,7 @@
 
 import localforage from "localforage";
 
-import type { ImageModel } from "@/lib/api";
+import type { ImageModel, ImageSizeOption } from "@/lib/api";
 
 export type ImageConversationMode = "generate" | "edit";
 
@@ -26,6 +26,7 @@ export type ImageTurn = {
   prompt: string;
   model: ImageModel;
   mode: ImageConversationMode;
+  size?: ImageSizeOption;
   referenceImages: StoredReferenceImage[];
   count: number;
   images: StoredImage[];
@@ -121,6 +122,7 @@ function normalizeTurn(turn: ImageTurn & Record<string, unknown>): ImageTurn {
     prompt: String(turn.prompt || ""),
     model: (turn.model as ImageModel) || "auto",
     mode: turn.mode === "edit" ? "edit" : "generate",
+    size: ["1:1", "16:9", "9:16", "4:3", "3:4"].includes(String(turn.size || "")) ? (turn.size as ImageSizeOption) : "1:1",
     referenceImages: getLegacyReferenceImages(turn),
     count: Math.max(1, Number(turn.count || normalizedImages.length || 1)),
     images: normalizedImages,
@@ -145,6 +147,10 @@ function normalizeConversation(conversation: ImageConversation & Record<string, 
           prompt: String(conversation.prompt || ""),
           model: (conversation.model as ImageModel) || "auto",
           mode: conversation.mode === "edit" ? "edit" : "generate",
+          size:
+            ["1:1", "16:9", "9:16", "4:3", "3:4"].includes(String(conversation.size || ""))
+              ? (conversation.size as ImageSizeOption)
+              : "1:1",
           referenceImages: getLegacyReferenceImages(conversation),
           count: Number(conversation.count || 1),
           images: Array.isArray(conversation.images) ? (conversation.images as StoredImage[]) : [],

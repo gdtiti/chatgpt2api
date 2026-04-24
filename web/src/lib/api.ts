@@ -3,6 +3,9 @@ import { httpRequest } from "@/lib/request";
 export type AccountType = "Free" | "Plus" | "ProLite" | "Pro" | "Team";
 export type AccountStatus = "正常" | "限流" | "异常" | "禁用";
 export type ImageModel = "auto" | "gpt-image-1" | "gpt-image-2";
+export type ImageSizeOption = "1:1" | "16:9" | "9:16" | "4:3" | "3:4";
+
+export const IMAGE_SIZE_OPTIONS: ImageSizeOption[] = ["1:1", "16:9", "9:16", "4:3", "3:4"];
 
 export type Account = {
   id: string;
@@ -53,8 +56,32 @@ export type SettingsConfig = {
   proxy: string;
   base_url?: string;
   "auth-key"?: string;
+  port?: number | string;
   refresh_account_interval_minute?: number | string;
+  image_failure_strategy?: "fail" | "retry" | "placeholder" | string;
+  image_retry_count?: number | string;
+  image_parallel_attempts?: number | string;
+  image_placeholder_path?: string;
   [key: string]: unknown;
+};
+
+export type ModelItem = {
+  id: string;
+  owned_by?: string;
+};
+
+export type APIKeyItem = {
+  id: string;
+  name: string;
+  prefix: string;
+  enabled: boolean;
+  scopes: string[];
+  allowed_models: string[];
+  created_at: string;
+  updated_at: string;
+  last_used_at?: string | null;
+  expires_at?: string | null;
+  request_count: number;
 };
 
 export async function login(authKey: string) {
@@ -111,14 +138,19 @@ export async function updateAccount(
   });
 }
 
-export async function generateImage(prompt: string, model?: ImageModel) {
+export async function fetchModelList() {
+  return httpRequest<{ object: string; data: ModelItem[] }>("/v1/models");
+}
+
+export async function generateImage(prompt: string, options?: { model?: ImageModel; size?: ImageSizeOption }) {
   return httpRequest<{ created: number; data: Array<{ b64_json: string; revised_prompt?: string }> }>(
     "/v1/images/generations",
     {
       method: "POST",
       body: {
         prompt,
-        ...(model ? { model } : {}),
+        ...(options?.model ? { model: options.model } : {}),
+        ...(options?.size ? { size: options.size } : {}),
         n: 1,
         response_format: "b64_json",
       },
@@ -126,7 +158,11 @@ export async function generateImage(prompt: string, model?: ImageModel) {
   );
 }
 
-export async function editImage(files: File | File[], prompt: string, model?: ImageModel) {
+export async function editImage(
+  files: File | File[],
+  prompt: string,
+  options?: { model?: ImageModel; size?: ImageSizeOption },
+) {
   const formData = new FormData();
   const uploadFiles = Array.isArray(files) ? files : [files];
 
@@ -134,8 +170,11 @@ export async function editImage(files: File | File[], prompt: string, model?: Im
     formData.append("image", file);
   });
   formData.append("prompt", prompt);
-  if (model) {
-    formData.append("model", model);
+  if (options?.model) {
+    formData.append("model", options.model);
+  }
+  if (options?.size) {
+    formData.append("size", options.size);
   }
   formData.append("n", "1");
 
@@ -156,6 +195,59 @@ export async function updateSettingsConfig(settings: SettingsConfig) {
   return httpRequest<{ config: SettingsConfig }>("/api/settings", {
     method: "POST",
     body: settings,
+  });
+}
+
+export async function listApiKeys() {
+  return httpRequest<{ items: APIKeyItem[] }>("/api/admin/keys");
+}
+
+export async function createApiKey(payload: {
+  name?: string;
+  allowed_models?: string[];
+  scopes?: string[];
+  expires_at?: string | null;
+}) {
+  return httpRequest<{ item: APIKeyItem; plain_text: string }>("/api/admin/keys", {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export async function updateApiKey(
+  keyId: string,
+  payload: {
+    name?: string;
+    enabled?: boolean;
+    allowed_models?: string[];
+    scopes?: string[];
+    expires_at?: string | null;
+  },
+) {
+  return httpRequest<{ item: APIKeyItem }>(`/api/admin/keys/${keyId}`, {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export async function rotateApiKey(keyId: string) {
+  return httpRequest<{ item: APIKeyItem; plain_text: string }>(`/api/admin/keys/${keyId}/rotate`, {
+    method: "POST",
+  });
+}
+
+export async function deleteApiKey(keyId: string) {
+  return httpRequest<{ ok: boolean }>(`/api/admin/keys/${keyId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function uploadPlaceholderImage(file: File) {
+  const formData = new FormData();
+  formData.append("image", file);
+  return httpRequest<{ placeholder_path: string; config: SettingsConfig }>("/api/admin/image-placeholder", {
+    method: "POST",
+    body: formData,
   });
 }
 

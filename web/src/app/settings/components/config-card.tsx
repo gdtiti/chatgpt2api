@@ -21,6 +21,7 @@ export function ConfigCard() {
   const setRefreshAccountIntervalMinute = useSettingsStore((state) => state.setRefreshAccountIntervalMinute);
   const setProxy = useSettingsStore((state) => state.setProxy);
   const setBaseUrl = useSettingsStore((state) => state.setBaseUrl);
+  const setPort = useSettingsStore((state) => state.setPort);
   const saveConfig = useSettingsStore((state) => state.saveConfig);
 
   const handleTestProxy = async () => {
@@ -79,6 +80,16 @@ export function ConfigCard() {
               className="h-10 rounded-xl border-stone-200 bg-white"
             />
             <p className="text-xs text-stone-500">单位分钟，控制账号自动刷新频率。</p>
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm text-stone-700">启动端口</label>
+            <Input
+              value={String(config?.port || "")}
+              onChange={(event) => setPort(event.target.value)}
+              placeholder="80"
+              className="h-10 rounded-xl border-stone-200 bg-white"
+            />
+            <p className="text-xs text-stone-500">修改后需要重启服务；环境变量 `CHATGPT2API_PORT` / `PORT` 会优先覆盖。</p>
           </div>
           <div className="space-y-2">
             <label className="text-sm text-stone-700">全局代理</label>

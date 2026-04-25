@@ -99,7 +99,7 @@ def create_app(
         title="chatgpt2api",
         version=app_version,
         lifespan=lifespan,
-        docs_url=None,
+        docs_url="/swagger",
         redoc_url=None,
     )
     app.add_middleware(

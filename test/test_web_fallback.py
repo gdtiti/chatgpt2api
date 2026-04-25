@@ -53,6 +53,14 @@ class WebFallbackRouteTests(unittest.TestCase):
             finally:
                 support_module.WEB_DIST_DIR = original_web_dist
 
+    def test_swagger_ui_uses_dedicated_route(self) -> None:
+        client = TestClient(create_app(chatgpt_service=_FakeChatGPTService(), job_service=_FakeJobService()))
+
+        response = client.get("/swagger")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("swagger-ui", response.text.lower())
+
 
 if __name__ == "__main__":
     unittest.main()

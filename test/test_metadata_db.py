@@ -3,11 +3,36 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+import sqlite3
 
 from services.metadata_db import MetadataDatabase
 
 
 class MetadataDatabaseTests(unittest.TestCase):
+    def test_missing_core_tables_are_recreated_on_next_use(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "metadata.sqlite3"
+            database = MetadataDatabase(db_path)
+            connection = sqlite3.connect(db_path)
+            try:
+                connection.execute("DROP TABLE async_jobs")
+                connection.commit()
+            finally:
+                connection.close()
+
+            jobs, total = database.list_async_jobs(is_admin=True, api_key_id="admin")
+
+            self.assertEqual(total, 0)
+            self.assertEqual(jobs, [])
+            connection = sqlite3.connect(db_path)
+            try:
+                row = connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'async_jobs'"
+                ).fetchone()
+            finally:
+                connection.close()
+            self.assertIsNotNone(row)
+
     def test_corrupt_database_is_quarantined_and_recreated(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             db_path = Path(tmp_dir) / "metadata.sqlite3"

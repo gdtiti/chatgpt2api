@@ -22,6 +22,7 @@ class MetadataDatabase:
     def __init__(self, path: Path | None = None) -> None:
         self.path = path or (DATA_DIR / "metadata.sqlite3")
         self._lock = RLock()
+        self._initializing = False
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
 
@@ -37,6 +38,12 @@ class MetadataDatabase:
                 if not self._is_corruption_error(exc):
                     raise
                 self._quarantine_corrupt_database(exc)
+                self._initialize()
+                connection = self._open_connection()
+                connection.row_factory = sqlite3.Row
+                self._verify_connection(connection)
+            if not self._initializing and not self._schema_ready(connection):
+                connection.close()
                 self._initialize()
                 connection = self._open_connection()
                 connection.row_factory = sqlite3.Row
@@ -72,6 +79,28 @@ class MetadataDatabase:
             raise sqlite3.DatabaseError(f"sqlite integrity check failed: {result}")
 
     @staticmethod
+    def _schema_ready(connection: sqlite3.Connection) -> bool:
+        required_tables = {
+            "settings_snapshots",
+            "accounts",
+            "async_jobs",
+            "gallery_images",
+            "task_logs",
+            "system_files",
+            "request_logs",
+        }
+        rows = connection.execute(
+            """
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'table' AND name IN (?, ?, ?, ?, ?, ?, ?)
+            """,
+            tuple(required_tables),
+        ).fetchall()
+        existing_tables = {str(row[0]) for row in rows}
+        return required_tables.issubset(existing_tables)
+
+    @staticmethod
     def _unique_quarantine_path(path: Path, timestamp: str) -> Path:
         candidate = path.with_name(f"{path.name}.corrupt-{timestamp}")
         if not candidate.exists():
@@ -102,117 +131,123 @@ class MetadataDatabase:
         )
 
     def _initialize(self) -> None:
-        with self._lock, self._connect() as connection:
-            connection.executescript(
-                """
-                PRAGMA journal_mode=WAL;
-                CREATE TABLE IF NOT EXISTS settings_snapshots (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    saved_at TEXT NOT NULL,
-                    payload_json TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS accounts (
-                    account_id TEXT PRIMARY KEY,
-                    access_token TEXT NOT NULL,
-                    type TEXT,
-                    status TEXT,
-                    quota INTEGER,
-                    image_quota_unknown INTEGER,
-                    email TEXT,
-                    user_id TEXT,
-                    default_model_slug TEXT,
-                    restore_at TEXT,
-                    success INTEGER,
-                    fail INTEGER,
-                    last_used_at TEXT,
-                    payload_json TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS async_jobs (
-                    job_id TEXT PRIMARY KEY,
-                    type TEXT,
-                    status TEXT,
-                    model TEXT,
-                    created_at TEXT,
-                    updated_at TEXT,
-                    api_key_id TEXT,
-                    api_key_name TEXT,
-                    prompt_preview TEXT,
-                    requested_count INTEGER,
-                    size TEXT,
-                    input_image_count INTEGER,
-                    result_ready INTEGER,
-                    result_count INTEGER,
-                    error_message TEXT,
-                    log_path TEXT,
-                    result_path TEXT,
-                    preview_images_json TEXT,
-                    payload_json TEXT,
-                    recorded_at TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS gallery_images (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    job_id TEXT NOT NULL,
-                    image_index INTEGER NOT NULL,
-                    image_id TEXT,
-                    type TEXT,
-                    model TEXT,
-                    prompt_preview TEXT,
-                    created_at TEXT,
-                    updated_at TEXT,
-                    api_key_id TEXT,
-                    api_key_name TEXT,
-                    src TEXT NOT NULL,
-                    url TEXT,
-                    thumbnail_url TEXT,
-                    relative_path TEXT,
-                    thumbnail_relative_path TEXT,
-                    wall_url TEXT,
-                    wall_relative_path TEXT,
-                    markdown TEXT,
-                    is_recommended INTEGER NOT NULL DEFAULT 0,
-                    is_pinned INTEGER NOT NULL DEFAULT 0,
-                    is_blocked INTEGER NOT NULL DEFAULT 0,
-                    payload_json TEXT,
-                    recorded_at TEXT NOT NULL,
-                    UNIQUE(job_id, image_index)
-                );
-                CREATE TABLE IF NOT EXISTS task_logs (
-                    job_id TEXT PRIMARY KEY,
-                    log_path TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS system_files (
-                    kind TEXT PRIMARY KEY,
-                    file_path TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS request_logs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    created_at TEXT NOT NULL,
-                    method TEXT NOT NULL,
-                    path TEXT NOT NULL,
-                    status_code INTEGER NOT NULL,
-                    duration_ms REAL NOT NULL,
-                    api_key_id TEXT,
-                    api_key_name TEXT,
-                    model TEXT,
-                    request_id TEXT,
-                    payload_hint TEXT
-                );
-                CREATE INDEX IF NOT EXISTS idx_async_jobs_scope_updated ON async_jobs(api_key_id, updated_at);
-                CREATE INDEX IF NOT EXISTS idx_async_jobs_status_type ON async_jobs(status, type);
-                CREATE INDEX IF NOT EXISTS idx_gallery_scope_updated ON gallery_images(api_key_id, updated_at);
-                CREATE INDEX IF NOT EXISTS idx_gallery_job_index ON gallery_images(job_id, image_index);
-                """
-            )
-            self._ensure_column(connection, "gallery_images", "relative_path", "TEXT")
-            self._ensure_column(connection, "gallery_images", "thumbnail_relative_path", "TEXT")
-            self._ensure_column(connection, "gallery_images", "wall_url", "TEXT")
-            self._ensure_column(connection, "gallery_images", "wall_relative_path", "TEXT")
-            self._ensure_column(connection, "gallery_images", "is_recommended", "INTEGER NOT NULL DEFAULT 0")
-            self._ensure_column(connection, "gallery_images", "is_pinned", "INTEGER NOT NULL DEFAULT 0")
-            self._ensure_column(connection, "gallery_images", "is_blocked", "INTEGER NOT NULL DEFAULT 0")
+        with self._lock:
+            previous_initializing = self._initializing
+            self._initializing = True
+            try:
+                with self._connect() as connection:
+                    connection.executescript(
+                        """
+                        PRAGMA journal_mode=WAL;
+                        CREATE TABLE IF NOT EXISTS settings_snapshots (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            saved_at TEXT NOT NULL,
+                            payload_json TEXT NOT NULL
+                        );
+                        CREATE TABLE IF NOT EXISTS accounts (
+                            account_id TEXT PRIMARY KEY,
+                            access_token TEXT NOT NULL,
+                            type TEXT,
+                            status TEXT,
+                            quota INTEGER,
+                            image_quota_unknown INTEGER,
+                            email TEXT,
+                            user_id TEXT,
+                            default_model_slug TEXT,
+                            restore_at TEXT,
+                            success INTEGER,
+                            fail INTEGER,
+                            last_used_at TEXT,
+                            payload_json TEXT NOT NULL,
+                            updated_at TEXT NOT NULL
+                        );
+                        CREATE TABLE IF NOT EXISTS async_jobs (
+                            job_id TEXT PRIMARY KEY,
+                            type TEXT,
+                            status TEXT,
+                            model TEXT,
+                            created_at TEXT,
+                            updated_at TEXT,
+                            api_key_id TEXT,
+                            api_key_name TEXT,
+                            prompt_preview TEXT,
+                            requested_count INTEGER,
+                            size TEXT,
+                            input_image_count INTEGER,
+                            result_ready INTEGER,
+                            result_count INTEGER,
+                            error_message TEXT,
+                            log_path TEXT,
+                            result_path TEXT,
+                            preview_images_json TEXT,
+                            payload_json TEXT,
+                            recorded_at TEXT NOT NULL
+                        );
+                        CREATE TABLE IF NOT EXISTS gallery_images (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            job_id TEXT NOT NULL,
+                            image_index INTEGER NOT NULL,
+                            image_id TEXT,
+                            type TEXT,
+                            model TEXT,
+                            prompt_preview TEXT,
+                            created_at TEXT,
+                            updated_at TEXT,
+                            api_key_id TEXT,
+                            api_key_name TEXT,
+                            src TEXT NOT NULL,
+                            url TEXT,
+                            thumbnail_url TEXT,
+                            relative_path TEXT,
+                            thumbnail_relative_path TEXT,
+                            wall_url TEXT,
+                            wall_relative_path TEXT,
+                            markdown TEXT,
+                            is_recommended INTEGER NOT NULL DEFAULT 0,
+                            is_pinned INTEGER NOT NULL DEFAULT 0,
+                            is_blocked INTEGER NOT NULL DEFAULT 0,
+                            payload_json TEXT,
+                            recorded_at TEXT NOT NULL,
+                            UNIQUE(job_id, image_index)
+                        );
+                        CREATE TABLE IF NOT EXISTS task_logs (
+                            job_id TEXT PRIMARY KEY,
+                            log_path TEXT NOT NULL,
+                            updated_at TEXT NOT NULL
+                        );
+                        CREATE TABLE IF NOT EXISTS system_files (
+                            kind TEXT PRIMARY KEY,
+                            file_path TEXT NOT NULL,
+                            updated_at TEXT NOT NULL
+                        );
+                        CREATE TABLE IF NOT EXISTS request_logs (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            created_at TEXT NOT NULL,
+                            method TEXT NOT NULL,
+                            path TEXT NOT NULL,
+                            status_code INTEGER NOT NULL,
+                            duration_ms REAL NOT NULL,
+                            api_key_id TEXT,
+                            api_key_name TEXT,
+                            model TEXT,
+                            request_id TEXT,
+                            payload_hint TEXT
+                        );
+                        CREATE INDEX IF NOT EXISTS idx_async_jobs_scope_updated ON async_jobs(api_key_id, updated_at);
+                        CREATE INDEX IF NOT EXISTS idx_async_jobs_status_type ON async_jobs(status, type);
+                        CREATE INDEX IF NOT EXISTS idx_gallery_scope_updated ON gallery_images(api_key_id, updated_at);
+                        CREATE INDEX IF NOT EXISTS idx_gallery_job_index ON gallery_images(job_id, image_index);
+                        """
+                    )
+                    self._ensure_column(connection, "gallery_images", "relative_path", "TEXT")
+                    self._ensure_column(connection, "gallery_images", "thumbnail_relative_path", "TEXT")
+                    self._ensure_column(connection, "gallery_images", "wall_url", "TEXT")
+                    self._ensure_column(connection, "gallery_images", "wall_relative_path", "TEXT")
+                    self._ensure_column(connection, "gallery_images", "is_recommended", "INTEGER NOT NULL DEFAULT 0")
+                    self._ensure_column(connection, "gallery_images", "is_pinned", "INTEGER NOT NULL DEFAULT 0")
+                    self._ensure_column(connection, "gallery_images", "is_blocked", "INTEGER NOT NULL DEFAULT 0")
+            finally:
+                self._initializing = previous_initializing
 
     @staticmethod
     def _ensure_column(connection: sqlite3.Connection, table_name: str, column_name: str, definition: str) -> None:

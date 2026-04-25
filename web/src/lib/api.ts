@@ -1,9 +1,13 @@
+import webConfig from "@/constants/common-env";
+import { getStoredAuthKey } from "@/store/auth";
+
 import { httpRequest } from "@/lib/request";
 
 export type AccountType = "Free" | "Plus" | "ProLite" | "Pro" | "Team";
 export type AccountStatus = "正常" | "限流" | "异常" | "禁用";
-export type ImageModel = "auto" | "gpt-image-1" | "gpt-image-2";
+export type ImageModel = "auto" | "gpt-image-1" | "gpt-image-2" | "codex-gpt-image-2" | string;
 export type ImageSizeOption = "1:1" | "16:9" | "9:16" | "4:3" | "3:4";
+export type ImageSizeValue = string;
 
 export const IMAGE_SIZE_OPTIONS: ImageSizeOption[] = ["1:1", "16:9", "9:16", "4:3", "3:4"];
 
@@ -70,6 +74,20 @@ export type ModelItem = {
   owned_by?: string;
 };
 
+export type ModelCatalogItem = {
+  id: string;
+  openai_id: string;
+  capabilities: string[];
+  owned_by?: string;
+  async_supported?: boolean;
+  image_options?: {
+    size_choices?: string[];
+    default_size?: string;
+    response_format_choices?: string[];
+    supports_multiple_reference_images?: boolean;
+  } | null;
+};
+
 export type APIKeyItem = {
   id: string;
   name: string;
@@ -82,6 +100,40 @@ export type APIKeyItem = {
   last_used_at?: string | null;
   expires_at?: string | null;
   request_count: number;
+};
+
+export type AsyncJobStatus = "queued" | "running" | "succeeded" | "failed";
+export type AsyncJobType =
+  | "chat.completions"
+  | "responses"
+  | "images.generations"
+  | "images.edits";
+
+export type AsyncJobItem = {
+  id: string;
+  type: AsyncJobType | string;
+  status: AsyncJobStatus | string;
+  model: string;
+  created_at: string;
+  updated_at: string;
+  log_path?: string | null;
+  api_key_id?: string | null;
+  api_key_name?: string | null;
+  prompt_preview?: string | null;
+  requested_count?: number;
+  size?: string | null;
+  input_image_count?: number;
+  result_ready?: boolean;
+  result_count?: number;
+  error?: { message?: string } | null;
+};
+
+export type AsyncJobSummary = {
+  total: number;
+  queued: number;
+  running: number;
+  succeeded: number;
+  failed: number;
 };
 
 export async function login(authKey: string) {
@@ -142,7 +194,11 @@ export async function fetchModelList() {
   return httpRequest<{ object: string; data: ModelItem[] }>("/v1/models");
 }
 
-export async function generateImage(prompt: string, options?: { model?: ImageModel; size?: ImageSizeOption }) {
+export async function fetchModelCatalog() {
+  return httpRequest<{ items: ModelCatalogItem[]; openai_models_endpoint: string }>("/api/catalog/models");
+}
+
+export async function generateImage(prompt: string, options?: { model?: ImageModel; size?: ImageSizeValue }) {
   return httpRequest<{ created: number; data: Array<{ b64_json: string; revised_prompt?: string }> }>(
     "/v1/images/generations",
     {
@@ -161,7 +217,7 @@ export async function generateImage(prompt: string, options?: { model?: ImageMod
 export async function editImage(
   files: File | File[],
   prompt: string,
-  options?: { model?: ImageModel; size?: ImageSizeOption },
+  options?: { model?: ImageModel; size?: ImageSizeValue },
 ) {
   const formData = new FormData();
   const uploadFiles = Array.isArray(files) ? files : [files];
@@ -249,6 +305,117 @@ export async function uploadPlaceholderImage(file: File) {
     method: "POST",
     body: formData,
   });
+}
+
+export async function fetchAsyncJobs(params?: {
+  limit?: number;
+  status?: string;
+  type?: string;
+}) {
+  const query = new URLSearchParams();
+  if (params?.limit) {
+    query.set("limit", String(params.limit));
+  }
+  if (params?.status && params.status !== "all") {
+    query.set("status", params.status);
+  }
+  if (params?.type && params.type !== "all") {
+    query.set("type", params.type);
+  }
+  const suffix = query.size > 0 ? `?${query.toString()}` : "";
+  return httpRequest<{ items: AsyncJobItem[]; summary: AsyncJobSummary }>(`/api/async/jobs${suffix}`);
+}
+
+export async function fetchAsyncJob(jobId: string) {
+  return httpRequest<{ job: AsyncJobItem }>(`/api/async/jobs/${jobId}`);
+}
+
+export async function fetchAsyncJobResult(jobId: string) {
+  return httpRequest<{ job: AsyncJobItem; result: unknown }>(`/api/async/jobs/${jobId}/result`);
+}
+
+export async function createAsyncJob(payload: {
+  type: AsyncJobType | string;
+  payload: Record<string, unknown>;
+}) {
+  return httpRequest<{ job: AsyncJobItem }>("/api/async/jobs", {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export async function streamAsyncJobEvents(
+  jobId: string,
+  handlers: {
+    onEvent?: (event: string, payload: unknown) => void;
+    signal?: AbortSignal;
+  } = {},
+) {
+  const authKey = await getStoredAuthKey();
+  const baseUrl = webConfig.apiUrl.replace(/\/$/, "");
+  const response = await fetch(`${baseUrl}/api/async/jobs/${jobId}/events`, {
+    headers: {
+      Accept: "text/event-stream",
+      ...(authKey ? { Authorization: `Bearer ${authKey}` } : {}),
+    },
+    signal: handlers.signal,
+  });
+  if (!response.ok || !response.body) {
+    const message = await response.text();
+    throw new Error(message || `SSE 订阅失败 (${response.status})`);
+  }
+
+  const decoder = new TextDecoder("utf-8");
+  const reader = response.body.getReader();
+  let buffer = "";
+
+  const emitEvent = (chunk: string) => {
+    const lines = chunk
+      .split(/\r?\n/)
+      .map((line) => line.trimEnd())
+      .filter(Boolean);
+    if (lines.length === 0) {
+      return;
+    }
+    let eventName = "message";
+    const dataLines: string[] = [];
+    for (const line of lines) {
+      if (line.startsWith("event:")) {
+        eventName = line.slice(6).trim() || "message";
+      } else if (line.startsWith("data:")) {
+        dataLines.push(line.slice(5).trim());
+      }
+    }
+    const rawPayload = dataLines.join("\n");
+    if (!rawPayload) {
+      return;
+    }
+    if (rawPayload === "[DONE]") {
+      handlers.onEvent?.("done", rawPayload);
+      return;
+    }
+    try {
+      handlers.onEvent?.(eventName, JSON.parse(rawPayload));
+    } catch {
+      handlers.onEvent?.(eventName, rawPayload);
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    buffer += decoder.decode(value, { stream: true });
+    const chunks = buffer.split(/\r?\n\r?\n/);
+    buffer = chunks.pop() || "";
+    chunks.forEach(emitEvent);
+  }
+
+  const rest = buffer.trim();
+  if (rest) {
+    emitEvent(rest);
+  }
 }
 
 // ── CPA (CLIProxyAPI) ──────────────────────────────────────────────

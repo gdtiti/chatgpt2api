@@ -39,9 +39,14 @@ def create_router(job_service: JobService) -> APIRouter:
     async def list_jobs(
             authorization: str | None = Header(default=None),
             limit: int = Query(default=50, ge=1, le=200),
+            status: str | None = Query(default=None),
+            job_type: str | None = Query(default=None, alias="type"),
     ):
         principal = require_client_principal(authorization)
-        return {"items": job_service.list_jobs(principal, limit=limit)}
+        return {
+            "items": job_service.list_jobs(principal, limit=limit, status=status, job_type=job_type),
+            "summary": job_service.summarize_jobs(principal),
+        }
 
     @router.get("/api/async/jobs/{job_id}")
     async def get_job(job_id: str, authorization: str | None = Header(default=None)):

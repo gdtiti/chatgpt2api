@@ -36,6 +36,9 @@ const asyncExample = `curl http://localhost:8000/api/async/jobs \\
     }
   }'`;
 
+const asyncSseExample = `curl -N http://localhost:8000/api/async/jobs/<job_id>/events \\
+  -H "Authorization: Bearer <client-api-key>"`;
+
 const imageExample = `curl http://localhost:8000/v1/images/generations \\
   -H "Authorization: Bearer <client-api-key>" \\
   -H "Content-Type: application/json" \\
@@ -79,8 +82,8 @@ export default function DocsPage() {
           <Badge variant="warning">quality 当前未支持</Badge>
         </div>
         <p className="max-w-[900px] text-sm leading-7 text-stone-500">
-          页面内汇总了下游接入时最常用的鉴权方式、模型接口、异步任务接口和图片参数约束。当前前端支持比例
-          `size` 选择，质量 `quality` 还没有进入后端契约。
+          页面内汇总了下游接入时最常用的鉴权方式、模型接口、异步任务接口和图片参数约束。网页画图页现已支持模型切换、同步直连、
+          异步 HTTP、异步 SSE 三种调用方式；质量 `quality` 还没有进入后端契约。
         </p>
       </div>
 
@@ -100,7 +103,7 @@ export default function DocsPage() {
             <div className="space-y-1">
               <h2 className="text-lg font-semibold tracking-tight">图片参数说明</h2>
               <p className="text-sm text-stone-500">
-                当前已支持 `size=1:1/16:9/9:16/4:3/3:4`。失败策略、重试次数、并发尝试和占位图由后台配置控制。
+                当前已支持 `size=1:1/16:9/9:16/4:3/3:4`，网页也可填写自定义尺寸文本，例如 `1024x1024` 或 `21:9`。后者会按提示透传到上游，不是严格像素契约。
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -120,7 +123,7 @@ export default function DocsPage() {
           <CardContent className="space-y-4 p-6">
             <div className="space-y-1">
               <h2 className="text-lg font-semibold tracking-tight">模型列表</h2>
-              <p className="text-sm text-stone-500">`/v1/models` 返回 OpenAI 风格模型列表，`/api/catalog/models` 会补能力说明。</p>
+              <p className="text-sm text-stone-500">`/v1/models` 返回 OpenAI 风格模型列表，`/api/catalog/models` 会补能力说明；网页画图页会基于这里的结果切换模型。</p>
             </div>
             <CodeBlock value={modelsExample} />
             <CodeBlock value={catalogExample} />
@@ -132,10 +135,11 @@ export default function DocsPage() {
             <div className="space-y-1">
               <h2 className="text-lg font-semibold tracking-tight">异步任务</h2>
               <p className="text-sm text-stone-500">
-                `/api/async/jobs` 支持图片生成、图片编辑、chat.completions、responses。SSE 订阅会持续发送 `ping` 保活。
+                `/api/async/jobs` 支持图片生成、图片编辑、chat.completions、responses。网页支持异步 HTTP 轮询和 SSE 订阅；SSE 订阅会持续发送 `ping` 保活。
               </p>
             </div>
             <CodeBlock value={asyncExample} />
+            <CodeBlock value={asyncSseExample} />
           </CardContent>
         </Card>
 

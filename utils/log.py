@@ -1,8 +1,32 @@
 import base64
 import binascii
+import contextvars
+from datetime import datetime, timezone
+import json
 import logging
+from pathlib import Path
 import re
+from threading import Lock
 from typing import Any
+
+BASE_DIR = Path(__file__).resolve().parents[1]
+DATA_DIR = BASE_DIR / "data"
+DEFAULT_SYSTEM_LOG_FILE = DATA_DIR / "system.log"
+_TASK_LOG_PATH: contextvars.ContextVar[Path | None] = contextvars.ContextVar("chatgpt2api_task_log_path", default=None)
+
+
+class _TaskLogContext:
+    def __init__(self, path: Path | None) -> None:
+        self._path = path
+        self._token: contextvars.Token[Path | None] | None = None
+
+    def __enter__(self) -> Path | None:
+        self._token = _TASK_LOG_PATH.set(self._path)
+        return self._path
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        if self._token is not None:
+            _TASK_LOG_PATH.reset(self._token)
 
 
 class Logger:
@@ -17,6 +41,18 @@ class Logger:
             self._logger.addHandler(handler)
         self._logger.setLevel(logging.INFO)
         self._logger.propagate = False
+        self._file_lock = Lock()
+        self._system_log_path = DEFAULT_SYSTEM_LOG_FILE
+
+    @property
+    def system_log_path(self) -> Path:
+        return self._system_log_path
+
+    def set_system_log_path(self, path: Path) -> None:
+        self._system_log_path = Path(path)
+
+    def task_context(self, path: Path | None) -> _TaskLogContext:
+        return _TaskLogContext(Path(path) if path else None)
 
     def _mask_string(self, value: str, keep: int = 10) -> str:
         if len(value) <= keep:
@@ -75,17 +111,42 @@ class Logger:
             return self._sanitize_string(value)
         return value
 
+    def _serialize(self, value: Any) -> str:
+        if isinstance(value, (dict, list, tuple)):
+            try:
+                return json.dumps(value, ensure_ascii=False)
+            except TypeError:
+                return str(value)
+        return str(value)
+
+    def _append_file_log(self, path: Path, level: str, message: Any) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        line = f"{timestamp} [{level}] {self._serialize(message)}\n"
+        with self._file_lock:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(line)
+
+    def _emit(self, level: str, message: Any) -> None:
+        sanitized = self._sanitize(message)
+        getattr(self._logger, level.lower())(sanitized)
+        self._append_file_log(self._system_log_path, level, sanitized)
+        task_log_path = _TASK_LOG_PATH.get()
+        if task_log_path is not None:
+            self._append_file_log(task_log_path, level, sanitized)
+
     def debug(self, message: Any) -> None:
-        self._logger.debug(self._sanitize(message))
+        self._emit("DEBUG", message)
 
     def info(self, message: Any) -> None:
-        self._logger.info(self._sanitize(message))
+        self._emit("INFO", message)
 
     def warning(self, message: Any) -> None:
-        self._logger.warning(self._sanitize(message))
+        self._emit("WARNING", message)
 
     def error(self, message: Any) -> None:
-        self._logger.error(self._sanitize(message))
+        self._emit("ERROR", message)
 
 
 logger = Logger()

@@ -11,6 +11,7 @@ from uuid import uuid4
 from services.api_key_service import AuthPrincipal
 from services.chatgpt_service import ChatGPTService
 from services.config import config
+from utils.log import logger
 
 
 def _utc_now() -> str:
@@ -19,6 +20,89 @@ def _utc_now() -> str:
 
 def _clean_text(value: object) -> str:
     return str(value or "").strip()
+
+
+def _timestamp_for_filename(value: object) -> str:
+    raw = _clean_text(value)
+    if not raw:
+        return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    compact = raw.replace("-", "").replace(":", "").replace(".", "")
+    compact = compact.replace("+0000", "Z").replace("+00:00", "Z")
+    compact = compact.replace("T", "T").replace("Z", "Z")
+    return "".join(char for char in compact if char.isalnum() or char in {"T", "Z"}) or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _coerce_positive_int(value: object, default: int = 1) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _truncate_text(value: str, limit: int = 72) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit].rstrip()}..."
+
+
+def _extract_text_from_message_content(content: object) -> str:
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for item in content:
+        if isinstance(item, dict) and str(item.get("type") or "") == "text":
+            text = _clean_text(item.get("text"))
+            if text:
+                parts.append(text)
+    return " ".join(parts)
+
+
+def _build_prompt_preview(payload: dict[str, object]) -> str | None:
+    prompt = _clean_text(payload.get("prompt"))
+    if prompt:
+        return _truncate_text(prompt)
+    input_value = payload.get("input")
+    if isinstance(input_value, str) and input_value.strip():
+        return _truncate_text(input_value)
+    messages = payload.get("messages")
+    if not isinstance(messages, list):
+        return None
+    for item in reversed(messages):
+        if not isinstance(item, dict) or str(item.get("role") or "") != "user":
+            continue
+        content = _extract_text_from_message_content(item.get("content"))
+        if content:
+            return _truncate_text(content)
+    return None
+
+
+def _count_input_images(images_value: object) -> int:
+    if isinstance(images_value, str):
+        return 1 if _clean_text(images_value) else 0
+    if not isinstance(images_value, list):
+        return 0
+    return sum(1 for item in images_value if _clean_text(item))
+
+
+def _count_result_items(result: dict[str, object] | None) -> int:
+    if not isinstance(result, dict):
+        return 0
+    value = result.get("result")
+    if isinstance(value, dict):
+        if isinstance(value.get("data"), list):
+            return len(value["data"])
+        if isinstance(value.get("choices"), list):
+            return len(value["choices"])
+        if isinstance(value.get("output"), list):
+            return len(value["output"])
+        return 1
+    if value is None:
+        return 0
+    return 1
 
 
 def _decode_async_image_payload(images_value: object) -> list[tuple[bytes, str, str]]:
@@ -51,13 +135,16 @@ class JobService:
             job_results_dir: Path,
             chatgpt_service: ChatGPTService,
             *,
+            task_logs_dir: Path | None = None,
             max_workers: int = 4,
     ):
         self.jobs_dir = jobs_dir
         self.job_results_dir = job_results_dir
+        self.task_logs_dir = task_logs_dir or (jobs_dir.parent / "task_logs")
         self.chatgpt_service = chatgpt_service
         self.jobs_dir.mkdir(parents=True, exist_ok=True)
         self.job_results_dir.mkdir(parents=True, exist_ok=True)
+        self.task_logs_dir.mkdir(parents=True, exist_ok=True)
         self._lock = Lock()
         self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="async-job")
 
@@ -69,6 +156,9 @@ class JobService:
 
     def _result_file(self, job_id: str) -> Path:
         return self.job_results_dir / f"{job_id}.json"
+
+    def _task_log_file(self, created_at: object, job_id: str) -> Path:
+        return self.task_logs_dir / f"{_timestamp_for_filename(created_at)}_{job_id}.log"
 
     @staticmethod
     def _read_json(path: Path) -> dict[str, object] | None:
@@ -86,7 +176,9 @@ class JobService:
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     @staticmethod
-    def _public_job(job: dict[str, object]) -> dict[str, object]:
+    def _public_job(job: dict[str, object], result: dict[str, object] | None = None) -> dict[str, object]:
+        payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
+        payload = payload if isinstance(payload, dict) else {}
         return {
             "id": job.get("id"),
             "type": job.get("type"),
@@ -94,7 +186,15 @@ class JobService:
             "model": job.get("model"),
             "created_at": job.get("created_at"),
             "updated_at": job.get("updated_at"),
+            "log_path": job.get("log_path"),
             "api_key_id": job.get("api_key_id"),
+            "api_key_name": job.get("api_key_name"),
+            "prompt_preview": _build_prompt_preview(payload),
+            "requested_count": _coerce_positive_int(payload.get("n"), 1),
+            "size": _clean_text(payload.get("size")) or None,
+            "input_image_count": _count_input_images(payload.get("images") or payload.get("image")),
+            "result_ready": result is not None,
+            "result_count": _count_result_items(result),
             "error": job.get("error"),
         }
 
@@ -135,40 +235,84 @@ class JobService:
             "model": model,
             "created_at": now,
             "updated_at": now,
+            "log_path": "",
             "api_key_id": principal.key_id,
             "api_key_name": principal.name,
             "payload": dict(payload or {}),
             "error": None,
         }
+        job["log_path"] = str(self._task_log_file(now, str(job["id"])))
         with self._lock:
             self._store_job(job)
+        with logger.task_context(Path(str(job["log_path"]))):
+            logger.info({
+                "event": "async_job_submitted",
+                "job_id": job["id"],
+                "job_type": job["type"],
+                "model": job["model"],
+                "api_key_id": job["api_key_id"],
+                "api_key_name": job["api_key_name"],
+                "log_path": job["log_path"],
+            })
         self._executor.submit(self._run_job, str(job["id"]))
         return self._public_job(job)
 
-    def list_jobs(self, principal: AuthPrincipal, *, limit: int = 50) -> list[dict[str, object]]:
+    def list_jobs(
+            self,
+            principal: AuthPrincipal,
+            *,
+            limit: int = 50,
+            status: str | None = None,
+            job_type: str | None = None,
+    ) -> list[dict[str, object]]:
         limit_value = max(1, min(limit, 200))
+        status_filter = _clean_text(status)
+        type_filter = _clean_text(job_type)
         jobs: list[dict[str, object]] = []
         for path in sorted(self.jobs_dir.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True):
             job = self._read_json(path)
             job = self._assert_job_access(job, principal)
             if job is None:
                 continue
-            jobs.append(self._public_job(job))
+            if status_filter and _clean_text(job.get("status")) != status_filter:
+                continue
+            if type_filter and _clean_text(job.get("type")) != type_filter:
+                continue
+            jobs.append(self._public_job(job, self._load_result(str(job.get("id") or ""))))
             if len(jobs) >= limit_value:
                 break
         return jobs
+
+    def summarize_jobs(self, principal: AuthPrincipal) -> dict[str, int]:
+        summary = {
+            "total": 0,
+            "queued": 0,
+            "running": 0,
+            "succeeded": 0,
+            "failed": 0,
+        }
+        for path in self.jobs_dir.glob("*.json"):
+            job = self._assert_job_access(self._read_json(path), principal)
+            if job is None:
+                continue
+            summary["total"] += 1
+            status = _clean_text(job.get("status"))
+            if status in summary:
+                summary[status] += 1
+        return summary
 
     def get_job(self, job_id: str, principal: AuthPrincipal) -> dict[str, object] | None:
         job = self._assert_job_access(self._load_job(job_id), principal)
         if job is None:
             return None
-        return self._public_job(job)
+        return self._public_job(job, self._load_result(job_id))
 
     def get_job_result(self, job_id: str, principal: AuthPrincipal) -> tuple[dict[str, object] | None, dict[str, object] | None]:
         job = self._assert_job_access(self._load_job(job_id), principal)
         if job is None:
             return None, None
-        return self._public_job(job), self._load_result(job_id)
+        result = self._load_result(job_id)
+        return self._public_job(job, result), result
 
     def _execute_job(self, job: dict[str, object]) -> dict[str, object]:
         payload = dict(job.get("payload") or {})
@@ -219,13 +363,33 @@ class JobService:
         running = self._update_job(job_id, status="running", error=None)
         if running is None:
             return
-        try:
-            result = self._execute_job(running)
-            self._write_json(self._result_file(job_id), {"result": result})
-            self._update_job(job_id, status="succeeded", error=None)
-        except Exception as exc:
-            self._update_job(
-                job_id,
-                status="failed",
-                error={"message": str(exc)},
-            )
+        log_path = Path(str(running.get("log_path") or self._task_log_file(running.get("created_at"), job_id)))
+        with logger.task_context(log_path):
+            logger.info({
+                "event": "async_job_started",
+                "job_id": job_id,
+                "job_type": running.get("type"),
+                "model": running.get("model"),
+                "log_path": str(log_path),
+            })
+            try:
+                result = self._execute_job(running)
+                result_payload = {"result": result}
+                self._write_json(self._result_file(job_id), result_payload)
+                self._update_job(job_id, status="succeeded", error=None)
+                logger.info({
+                    "event": "async_job_succeeded",
+                    "job_id": job_id,
+                    "result_count": _count_result_items(result_payload),
+                })
+            except Exception as exc:
+                self._update_job(
+                    job_id,
+                    status="failed",
+                    error={"message": str(exc)},
+                )
+                logger.error({
+                    "event": "async_job_failed",
+                    "job_id": job_id,
+                    "error": str(exc),
+                })

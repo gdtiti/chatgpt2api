@@ -7,7 +7,17 @@ import { ImageComposer } from "@/app/image/components/image-composer";
 import { ImageResults, type ImageLightboxItem } from "@/app/image/components/image-results";
 import { ImageSidebar } from "@/app/image/components/image-sidebar";
 import { ImageLightbox } from "@/components/image-lightbox";
-import { editImage, fetchAccounts, generateImage, type Account, type ImageSizeOption } from "@/lib/api";
+import {
+  createAsyncJob,
+  editImage,
+  fetchAccounts,
+  fetchAsyncJob,
+  fetchAsyncJobResult,
+  fetchModelCatalog,
+  generateImage,
+  streamAsyncJobEvents,
+  type Account,
+} from "@/lib/api";
 import {
   clearImageConversations,
   deleteImageConversation,
@@ -16,6 +26,7 @@ import {
   saveImageConversations,
   type ImageConversation,
   type ImageConversationMode,
+  type ImageRequestMode,
   type ImageTurn,
   type ImageTurnStatus,
   type StoredImage,
@@ -24,6 +35,8 @@ import {
 
 const ACTIVE_CONVERSATION_STORAGE_KEY = "chatgpt2api:image_active_conversation_id";
 const activeConversationQueueIds = new Set<string>();
+const CUSTOM_SIZE_VALUE = "__custom__";
+const DEFAULT_IMAGE_MODELS = ["auto", "gpt-image-2", "codex-gpt-image-2"];
 
 function buildConversationTitle(prompt: string) {
   const trimmed = prompt.trim();
@@ -101,6 +114,51 @@ function sortImageConversations(conversations: ImageConversation[]) {
   return [...conversations].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
+function normalizeImageModels(items: Array<{ id?: string; image_options?: object | null }>) {
+  const ids = Array.from(
+    new Set(
+      items
+        .filter((item) => item.id === "auto" || !!item.image_options)
+        .map((item) => String(item.id || "").trim())
+        .filter(Boolean),
+    ),
+  );
+  return ids.length > 0 ? ids : DEFAULT_IMAGE_MODELS;
+}
+
+function buildTurnImagesFromResult(turn: ImageTurn, result: unknown): { images: StoredImage[]; failedCount: number } {
+  const data =
+    result && typeof result === "object" && Array.isArray((result as { data?: unknown[] }).data)
+      ? (result as { data: Array<Record<string, unknown>> }).data
+      : [];
+
+  const images = turn.images.map((image, index) => {
+    const item = data[index];
+    const b64Json = typeof item?.b64_json === "string" ? item.b64_json.trim() : "";
+    if (b64Json) {
+      return {
+        id: image.id,
+        status: "success" as const,
+        b64_json: b64Json,
+      };
+    }
+    return {
+      id: image.id,
+      status: "error" as const,
+      error: "未返回图片数据",
+    };
+  });
+
+  return {
+    images,
+    failedCount: images.filter((item) => item.status === "error").length,
+  };
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 async function recoverConversationHistory(items: ImageConversation[]) {
   const normalized = items.map((conversation) => {
     let changed = false;
@@ -169,8 +227,13 @@ export default function ImagePage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [imagePrompt, setImagePrompt] = useState("");
+  const [imageModel, setImageModel] = useState("auto");
+  const [availableModels, setAvailableModels] = useState<string[]>(DEFAULT_IMAGE_MODELS);
+  const [requestMode, setRequestMode] = useState<ImageRequestMode>("direct");
   const [imageCount, setImageCount] = useState("1");
-  const [imageSize, setImageSize] = useState<ImageSizeOption>("1:1");
+  const [imageSize, setImageSize] = useState("1:1");
+  const [imageSizePreset, setImageSizePreset] = useState("1:1");
+  const [customImageSize, setCustomImageSize] = useState("");
   const [imageMode, setImageMode] = useState<ImageConversationMode>("generate");
   const [referenceImageFiles, setReferenceImageFiles] = useState<File[]>([]);
   const [referenceImages, setReferenceImages] = useState<StoredReferenceImage[]>([]);
@@ -183,6 +246,10 @@ export default function ImagePage() {
   const [lightboxIndex, setLightboxIndex] = useState(0);
 
   const parsedCount = useMemo(() => Math.max(1, Math.min(10, Number(imageCount) || 1)), [imageCount]);
+  const resolvedImageSize = useMemo(
+    () => (imageSizePreset === CUSTOM_SIZE_VALUE ? customImageSize.trim() : imageSizePreset),
+    [customImageSize, imageSizePreset],
+  );
   const selectedConversation = useMemo(
     () => conversations.find((item) => item.id === selectedConversationId) ?? null,
     [conversations, selectedConversationId],
@@ -231,6 +298,31 @@ export default function ImagePage() {
     };
 
     void loadHistory();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadModels = async () => {
+      try {
+        const data = await fetchModelCatalog();
+        if (cancelled) {
+          return;
+        }
+        const nextModels = normalizeImageModels(data.items || []);
+        setAvailableModels(nextModels);
+        setImageModel((current) => (nextModels.includes(current) ? current : nextModels[0] || "auto"));
+      } catch {
+        if (!cancelled) {
+          setAvailableModels(DEFAULT_IMAGE_MODELS);
+        }
+      }
+    };
+
+    void loadModels();
     return () => {
       cancelled = true;
     };
@@ -324,8 +416,6 @@ export default function ImagePage() {
 
   const clearComposerInputs = useCallback(() => {
     setImagePrompt("");
-    setImageCount("1");
-    setImageSize("1:1");
     setReferenceImageFiles([]);
     setReferenceImages([]);
     if (fileInputRef.current) {
@@ -495,6 +585,8 @@ export default function ImagePage() {
           dataUrlToFile(image.dataUrl, image.name || `${queuedTurn.id}-${index + 1}.png`, image.type),
         );
         const pendingImages = queuedTurn.images.filter((image) => image.status === "loading");
+        const turnSize = queuedTurn.size || "1:1";
+        const turnModel = queuedTurn.model || "auto";
 
         if (queuedTurn.mode === "edit" && referenceFiles.length === 0) {
           throw new Error("未找到可用于继续编辑的参考图");
@@ -522,12 +614,120 @@ export default function ImagePage() {
           return;
         }
 
+        if (queuedTurn.requestMode !== "direct") {
+          const asyncPayload =
+            queuedTurn.mode === "edit"
+              ? {
+                  model: turnModel,
+                  prompt: queuedTurn.prompt,
+                  n: queuedTurn.count,
+                  size: turnSize,
+                  response_format: "b64_json",
+                  images: queuedTurn.referenceImages.map((image) => image.dataUrl),
+                }
+              : {
+                  model: turnModel,
+                  prompt: queuedTurn.prompt,
+                  n: queuedTurn.count,
+                  size: turnSize,
+                  response_format: "b64_json",
+                };
+
+          const createdJob = await createAsyncJob({
+            type: queuedTurn.mode === "edit" ? "images.edits" : "images.generations",
+            payload: asyncPayload,
+          });
+
+          await updateConversation(
+            conversationId,
+            (current) => {
+              const conversation = current ?? snapshot;
+              return {
+                ...conversation,
+                updatedAt: new Date().toISOString(),
+                turns: conversation.turns.map((turn) =>
+                  turn.id === queuedTurn.id
+                    ? {
+                        ...turn,
+                        asyncJobId: createdJob.job.id,
+                      }
+                    : turn,
+                ),
+              };
+            },
+            { persist: false },
+          );
+
+          let finalResult: unknown = null;
+          let finalError = "";
+
+          if (queuedTurn.requestMode === "async_sse") {
+            await streamAsyncJobEvents(createdJob.job.id, {
+              onEvent: (event, payload) => {
+                if (event === "result" && payload && typeof payload === "object") {
+                  finalResult = (payload as { result?: unknown }).result;
+                }
+                if (event === "error" && payload && typeof payload === "object") {
+                  const directError = (payload as { error?: string }).error;
+                  const jobError = (payload as { job?: { error?: { message?: string } } }).job?.error?.message;
+                  finalError = String(jobError || directError || "异步任务失败");
+                }
+              },
+            });
+          } else {
+            const deadline = Date.now() + 5 * 60 * 1000;
+            while (Date.now() < deadline) {
+              const jobState = await fetchAsyncJob(createdJob.job.id);
+              if (jobState.job.status === "succeeded") {
+                finalResult = (await fetchAsyncJobResult(createdJob.job.id)).result;
+                break;
+              }
+              if (jobState.job.status === "failed") {
+                finalError = String(jobState.job.error?.message || "异步任务失败");
+                break;
+              }
+              await sleep(1500);
+            }
+            if (finalResult === null && !finalError) {
+              finalError = "等待异步任务结果超时";
+            }
+          }
+
+          if (finalResult === null) {
+            throw new Error(finalError || "异步任务失败");
+          }
+
+          await updateConversation(conversationId, (current) => {
+            const conversation = current ?? snapshot;
+            return {
+              ...conversation,
+              updatedAt: new Date().toISOString(),
+              turns: conversation.turns.map((turn) => {
+                if (turn.id !== queuedTurn.id) {
+                  return turn;
+                }
+                const { images, failedCount } = buildTurnImagesFromResult(turn, finalResult);
+                return {
+                  ...turn,
+                  asyncJobId: createdJob.job.id,
+                  images,
+                  status: failedCount > 0 ? "error" : "success",
+                  error: failedCount > 0 ? `其中 ${failedCount} 张未成功生成` : undefined,
+                };
+              }),
+            };
+          });
+
+          await loadQuota();
+          return;
+        }
+
         const tasks = pendingImages.map(async (pendingImage) => {
           try {
             const data =
               queuedTurn.mode === "edit"
-                ? await editImage(referenceFiles, queuedTurn.prompt, { size: queuedTurn.size || "1:1" })
-                : await generateImage(queuedTurn.prompt, { size: queuedTurn.size || "1:1" });
+                ? await editImage(referenceFiles, queuedTurn.prompt, { model: turnModel, size: turnSize })
+                : await generateImage(queuedTurn.prompt, { model: turnModel, size: turnSize });
             const first = data.data?.[0];
             if (!first?.b64_json) {
               throw new Error("未返回图片数据");
@@ -680,6 +880,9 @@ export default function ImagePage() {
       return;
     }
 
+    const nextSize = resolvedImageSize || "1:1";
+    setImageSize(nextSize);
+
     const targetConversation = selectedConversationId
       ? conversationsRef.current.find((conversation) => conversation.id === selectedConversationId) ?? null
       : null;
@@ -689,9 +892,10 @@ export default function ImagePage() {
     const draftTurn: ImageTurn = {
       id: turnId,
       prompt,
-      model: "auto",
+      model: imageModel,
       mode: imageMode,
-      size: imageSize,
+      requestMode,
+      size: nextSize,
       referenceImages: imageMode === "edit" ? referenceImages : [],
       count: parsedCount,
       images: Array.from({ length: parsedCount }, (_, index) => ({
@@ -762,8 +966,13 @@ export default function ImagePage() {
           <ImageComposer
             mode={imageMode}
             prompt={imagePrompt}
+            imageModel={imageModel}
+            imageModels={availableModels}
+            requestMode={requestMode}
             imageCount={imageCount}
-            imageSize={imageSize}
+            imageSize={resolvedImageSize || imageSize}
+            imageSizePreset={imageSizePreset}
+            customImageSize={customImageSize}
             availableQuota={availableQuota}
             activeTaskCount={activeTaskCount}
             referenceImages={referenceImages}
@@ -771,8 +980,16 @@ export default function ImagePage() {
             fileInputRef={fileInputRef}
             onModeChange={setImageMode}
             onPromptChange={setImagePrompt}
+            onImageModelChange={setImageModel}
+            onRequestModeChange={setRequestMode}
             onImageCountChange={setImageCount}
-            onImageSizeChange={setImageSize}
+            onImageSizePresetChange={(value) => {
+              setImageSizePreset(value);
+              if (value !== CUSTOM_SIZE_VALUE) {
+                setImageSize(value);
+              }
+            }}
+            onCustomImageSizeChange={setCustomImageSize}
             onSubmit={handleSubmit}
             onPickReferenceImage={() => fileInputRef.current?.click()}
             onReferenceImageChange={handleReferenceImageChange}

@@ -23,7 +23,12 @@ def create_app(
         job_service: JobService | None = None,
 ) -> FastAPI:
     chatgpt_service = chatgpt_service or ChatGPTService(account_service)
-    job_service = job_service or JobService(config.jobs_dir, config.job_results_dir, chatgpt_service)
+    job_service = job_service or JobService(
+        config.jobs_dir,
+        config.job_results_dir,
+        chatgpt_service,
+        task_logs_dir=config.task_logs_dir,
+    )
     app_version = config.app_version
 
     @asynccontextmanager

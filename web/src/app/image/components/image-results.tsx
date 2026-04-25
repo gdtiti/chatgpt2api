@@ -114,11 +114,17 @@ export function ImageResults({
 
                 <div className="mb-4 flex flex-wrap items-center gap-2 text-xs text-stone-500">
                   <span className="rounded-full bg-stone-100 px-3 py-1">{turn.count} 张</span>
+                  <span className="rounded-full bg-stone-100 px-3 py-1">{turn.model || "auto"}</span>
+                  <span className="rounded-full bg-stone-100 px-3 py-1">{formatRequestMode(turn.requestMode)}</span>
+                  {turn.size ? <span className="rounded-full bg-stone-100 px-3 py-1">尺寸 {turn.size}</span> : null}
                   <span className="rounded-full bg-stone-100 px-3 py-1">{getTurnStatusLabel(turn.status)}</span>
                   {turn.status === "queued" ? (
                     <span className="rounded-full bg-amber-50 px-3 py-1 text-amber-700">等待当前对话中的前序任务完成</span>
                   ) : null}
                 </div>
+                {turn.asyncJobId ? (
+                  <div className="mb-4 text-right text-[11px] text-stone-400">任务 ID: {turn.asyncJobId}</div>
+                ) : null}
 
                 <div className="columns-1 gap-4 space-y-4 sm:columns-2 xl:columns-3">
                   {turn.images.map((image, index) => {
@@ -215,4 +221,14 @@ function getTurnStatusLabel(status: ImageTurnStatus) {
     return "已完成";
   }
   return "失败";
+}
+
+function formatRequestMode(value: string) {
+  if (value === "async_http") {
+    return "异步 HTTP";
+  }
+  if (value === "async_sse") {
+    return "异步 SSE";
+  }
+  return "直连接口";
 }

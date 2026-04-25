@@ -272,6 +272,17 @@ class ConfigStore:
         return DATA_DIR / "api_keys.json"
 
     @property
+    def system_log_file(self) -> Path:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        return DATA_DIR / "system.log"
+
+    @property
+    def task_logs_dir(self) -> Path:
+        path = DATA_DIR / "task_logs"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @property
     def jobs_dir(self) -> Path:
         path = DATA_DIR / "jobs"
         path.mkdir(parents=True, exist_ok=True)

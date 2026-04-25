@@ -8,15 +8,22 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { IMAGE_SIZE_OPTIONS, type ImageSizeOption } from "@/lib/api";
-import type { ImageConversationMode } from "@/store/image-conversations";
+import { IMAGE_SIZE_OPTIONS } from "@/lib/api";
+import type { ImageConversationMode, ImageRequestMode } from "@/store/image-conversations";
 import { cn } from "@/lib/utils";
+
+const CUSTOM_SIZE_VALUE = "__custom__";
 
 type ImageComposerProps = {
   mode: ImageConversationMode;
   prompt: string;
+  imageModel: string;
+  imageModels: string[];
+  requestMode: ImageRequestMode;
   imageCount: string;
-  imageSize: ImageSizeOption;
+  imageSize: string;
+  imageSizePreset: string;
+  customImageSize: string;
   availableQuota: string;
   activeTaskCount: number;
   referenceImages: Array<{ name: string; dataUrl: string }>;
@@ -24,8 +31,11 @@ type ImageComposerProps = {
   fileInputRef: RefObject<HTMLInputElement | null>;
   onModeChange: (value: ImageConversationMode) => void;
   onPromptChange: (value: string) => void;
+  onImageModelChange: (value: string) => void;
+  onRequestModeChange: (value: ImageRequestMode) => void;
   onImageCountChange: (value: string) => void;
-  onImageSizeChange: (value: ImageSizeOption) => void;
+  onImageSizePresetChange: (value: string) => void;
+  onCustomImageSizeChange: (value: string) => void;
   onSubmit: () => void | Promise<void>;
   onPickReferenceImage: () => void;
   onReferenceImageChange: (files: File[]) => void | Promise<void>;
@@ -35,8 +45,13 @@ type ImageComposerProps = {
 export function ImageComposer({
   mode,
   prompt,
+  imageModel,
+  imageModels,
+  requestMode,
   imageCount,
   imageSize,
+  imageSizePreset,
+  customImageSize,
   availableQuota,
   activeTaskCount,
   referenceImages,
@@ -44,8 +59,11 @@ export function ImageComposer({
   fileInputRef,
   onModeChange,
   onPromptChange,
+  onImageModelChange,
+  onRequestModeChange,
   onImageCountChange,
-  onImageSizeChange,
+  onImageSizePresetChange,
+  onCustomImageSizeChange,
   onSubmit,
   onPickReferenceImage,
   onReferenceImageChange,
@@ -172,6 +190,34 @@ export function ImageComposer({
                     </div>
                   )}
                   <div className="flex items-center gap-2 rounded-full border border-stone-200 bg-white px-3 py-1">
+                    <span className="text-sm font-medium text-stone-700">模型</span>
+                    <Select value={imageModel} onValueChange={onImageModelChange}>
+                      <SelectTrigger className="h-8 w-[168px] rounded-full border-0 bg-transparent px-0 text-sm font-medium text-stone-700 shadow-none focus-visible:ring-0">
+                        <SelectValue placeholder="选择模型" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {imageModels.map((option) => (
+                          <SelectItem key={option} value={option}>
+                            {option}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex items-center gap-2 rounded-full border border-stone-200 bg-white px-3 py-1">
+                    <span className="text-sm font-medium text-stone-700">调用</span>
+                    <Select value={requestMode} onValueChange={(value) => onRequestModeChange(value as ImageRequestMode)}>
+                      <SelectTrigger className="h-8 w-[156px] rounded-full border-0 bg-transparent px-0 text-sm font-medium text-stone-700 shadow-none focus-visible:ring-0">
+                        <SelectValue placeholder="选择方式" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="direct">直连接口</SelectItem>
+                        <SelectItem value="async_http">异步 HTTP</SelectItem>
+                        <SelectItem value="async_sse">异步 SSE</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex items-center gap-2 rounded-full border border-stone-200 bg-white px-3 py-1">
                     <span className="text-sm font-medium text-stone-700">张数</span>
                     <Input
                       type="number"
@@ -184,9 +230,9 @@ export function ImageComposer({
                     />
                   </div>
                   <div className="flex items-center gap-2 rounded-full border border-stone-200 bg-white px-3 py-1">
-                    <span className="text-sm font-medium text-stone-700">比例</span>
-                    <Select value={imageSize} onValueChange={(value) => onImageSizeChange(value as ImageSizeOption)}>
-                      <SelectTrigger className="h-8 w-[104px] rounded-full border-0 bg-transparent px-0 text-sm font-medium text-stone-700 shadow-none focus-visible:ring-0">
+                    <span className="text-sm font-medium text-stone-700">分辨率</span>
+                    <Select value={imageSizePreset} onValueChange={onImageSizePresetChange}>
+                      <SelectTrigger className="h-8 w-[120px] rounded-full border-0 bg-transparent px-0 text-sm font-medium text-stone-700 shadow-none focus-visible:ring-0">
                         <SelectValue placeholder="1:1" />
                       </SelectTrigger>
                       <SelectContent>
@@ -195,9 +241,21 @@ export function ImageComposer({
                             {option}
                           </SelectItem>
                         ))}
+                        <SelectItem value={CUSTOM_SIZE_VALUE}>自定义</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
+                  {imageSizePreset === CUSTOM_SIZE_VALUE ? (
+                    <div className="flex items-center gap-2 rounded-full border border-stone-200 bg-white px-3 py-1">
+                      <span className="text-sm font-medium text-stone-700">自定义</span>
+                      <Input
+                        value={customImageSize}
+                        onChange={(event) => onCustomImageSizeChange(event.target.value)}
+                        placeholder="例如 1024x1024 或 21:9"
+                        className="h-8 w-[180px] border-0 bg-transparent px-0 text-sm font-medium text-stone-700 shadow-none focus-visible:ring-0"
+                      />
+                    </div>
+                  ) : null}
                   <div className="flex items-center gap-2 rounded-full border border-dashed border-stone-200 bg-stone-50 px-3 py-2">
                     <span className="text-sm font-medium text-stone-700">质量</span>
                     <Badge variant="outline" className="rounded-full border-stone-200 bg-white text-stone-500">
@@ -212,6 +270,10 @@ export function ImageComposer({
                       图生图
                     </ModeButton>
                   </div>
+                </div>
+
+                <div className="px-1 text-right text-[11px] text-stone-400">
+                  当前传参: model={imageModel} / size={imageSize || "1:1"} / mode={requestMode}
                 </div>
 
                 <button

@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 
 const navItems = [
   { href: "/image", label: "画图" },
+  { href: "/jobs", label: "任务列表" },
   { href: "/accounts", label: "号池管理" },
   { href: "/settings", label: "设置" },
   { href: "/docs", label: "API 说明" },

@@ -2,9 +2,10 @@
 
 import localforage from "localforage";
 
-import type { ImageModel, ImageSizeOption } from "@/lib/api";
+import type { ImageModel } from "@/lib/api";
 
 export type ImageConversationMode = "generate" | "edit";
+export type ImageRequestMode = "direct" | "async_http" | "async_sse";
 
 export type StoredReferenceImage = {
   name: string;
@@ -26,7 +27,9 @@ export type ImageTurn = {
   prompt: string;
   model: ImageModel;
   mode: ImageConversationMode;
-  size?: ImageSizeOption;
+  requestMode: ImageRequestMode;
+  size?: string;
+  asyncJobId?: string;
   referenceImages: StoredReferenceImage[];
   count: number;
   images: StoredImage[];
@@ -122,7 +125,12 @@ function normalizeTurn(turn: ImageTurn & Record<string, unknown>): ImageTurn {
     prompt: String(turn.prompt || ""),
     model: (turn.model as ImageModel) || "auto",
     mode: turn.mode === "edit" ? "edit" : "generate",
-    size: ["1:1", "16:9", "9:16", "4:3", "3:4"].includes(String(turn.size || "")) ? (turn.size as ImageSizeOption) : "1:1",
+    requestMode:
+      turn.requestMode === "async_http" || turn.requestMode === "async_sse" || turn.requestMode === "direct"
+        ? turn.requestMode
+        : "direct",
+    size: typeof turn.size === "string" && turn.size.trim() ? turn.size.trim() : "1:1",
+    asyncJobId: typeof turn.asyncJobId === "string" && turn.asyncJobId.trim() ? turn.asyncJobId.trim() : undefined,
     referenceImages: getLegacyReferenceImages(turn),
     count: Math.max(1, Number(turn.count || normalizedImages.length || 1)),
     images: normalizedImages,
@@ -147,10 +155,17 @@ function normalizeConversation(conversation: ImageConversation & Record<string, 
           prompt: String(conversation.prompt || ""),
           model: (conversation.model as ImageModel) || "auto",
           mode: conversation.mode === "edit" ? "edit" : "generate",
-          size:
-            ["1:1", "16:9", "9:16", "4:3", "3:4"].includes(String(conversation.size || ""))
-              ? (conversation.size as ImageSizeOption)
-              : "1:1",
+          requestMode:
+            conversation.requestMode === "async_http" ||
+            conversation.requestMode === "async_sse" ||
+            conversation.requestMode === "direct"
+              ? conversation.requestMode
+              : "direct",
+          size: typeof conversation.size === "string" && conversation.size.trim() ? conversation.size.trim() : "1:1",
+          asyncJobId:
+            typeof conversation.asyncJobId === "string" && conversation.asyncJobId.trim()
+              ? conversation.asyncJobId.trim()
+              : undefined,
           referenceImages: getLegacyReferenceImages(conversation),
           count: Number(conversation.count || 1),
           images: Array.isArray(conversation.images) ? (conversation.images as StoredImage[]) : [],

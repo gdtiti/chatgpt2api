@@ -16,7 +16,7 @@ from api.support import (
 )
 from services.account_service import account_service
 from services.chatgpt_service import ChatGPTService, ImageGenerationError
-from utils.helper import is_image_chat_request, sse_json_stream
+from utils.helper import is_image_chat_request, responses_sse_stream, sse_json_stream
 
 
 class ImageGenerationRequest(BaseModel):
@@ -182,7 +182,7 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
         ensure_model_access(principal, payload.get("model") or default_model)
         if bool(payload.get("stream")):
             return StreamingResponse(
-                sse_json_stream(chatgpt_service.stream_response(payload)),
+                responses_sse_stream(chatgpt_service.stream_response(payload)),
                 media_type="text/event-stream",
             )
         return await run_in_threadpool(chatgpt_service.create_response, payload)

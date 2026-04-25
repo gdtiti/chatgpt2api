@@ -101,7 +101,17 @@ export type ModelCatalogItem = {
 export type ImageResultItem = {
   b64_json?: string;
   url?: string;
+  thumbnail_url?: string;
+  markdown?: string;
   revised_prompt?: string;
+};
+
+export type PreviewImageItem = {
+  id: string;
+  src: string;
+  url?: string | null;
+  thumbnail_url?: string | null;
+  markdown?: string | null;
 };
 
 export type APIKeyItem = {
@@ -146,6 +156,7 @@ export type AsyncJobItem = {
   input_image_count?: number;
   result_ready?: boolean;
   result_count?: number;
+  preview_images?: PreviewImageItem[];
   error?: { message?: string } | null;
 };
 

@@ -177,7 +177,9 @@ function normalizeStoredImageResult(item: unknown, fallbackId: string): StoredIm
   const candidate = item as Record<string, unknown>;
   const b64Json = typeof candidate.b64_json === "string" ? candidate.b64_json.trim() : "";
   const url = typeof candidate.url === "string" ? candidate.url.trim() : "";
-  if (!b64Json && !url) {
+  const thumbnailUrl = typeof candidate.thumbnail_url === "string" ? candidate.thumbnail_url.trim() : "";
+  const markdown = typeof candidate.markdown === "string" ? candidate.markdown.trim() : "";
+  if (!b64Json && !url && !thumbnailUrl) {
     return null;
   }
   return {
@@ -185,6 +187,8 @@ function normalizeStoredImageResult(item: unknown, fallbackId: string): StoredIm
     status: "success",
     ...(b64Json ? { b64_json: b64Json } : {}),
     ...(url ? { url } : {}),
+    ...(thumbnailUrl ? { thumbnail_url: thumbnailUrl } : {}),
+    ...(markdown ? { markdown } : {}),
   };
 }
 

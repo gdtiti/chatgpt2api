@@ -226,6 +226,12 @@ class ConfigStore:
 
     def _save(self) -> None:
         self.path.write_text(json.dumps(self.data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        try:
+            from services.metadata_db import metadata_db
+
+            metadata_db.record_settings(self.get())
+        except Exception:
+            pass
 
     @property
     def auth_key(self) -> str:

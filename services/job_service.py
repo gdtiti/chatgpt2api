@@ -105,6 +105,62 @@ def _count_result_items(result: dict[str, object] | None) -> int:
     return 1
 
 
+def _is_probable_image_url(value: str) -> bool:
+    text = _clean_text(value)
+    if not text:
+        return False
+    return text.startswith(("http://", "https://", "/api/view/data/", "/api/images/", "data:image/"))
+
+
+def _preview_image_from_item(item: dict[str, object], index: int) -> dict[str, object] | None:
+    thumbnail_url = _clean_text(item.get("thumbnail_url"))
+    image_url = _clean_text(item.get("url"))
+    markdown = _clean_text(item.get("markdown"))
+    b64_json = _clean_text(item.get("b64_json"))
+    result_value = _clean_text(item.get("result"))
+    src = thumbnail_url or image_url
+    if not src:
+        if b64_json:
+            src = f"data:image/png;base64,{b64_json}"
+        elif result_value.startswith("data:image/"):
+            src = result_value
+        elif result_value and not _is_probable_image_url(result_value):
+            src = f"data:image/png;base64,{result_value}"
+        elif _is_probable_image_url(result_value):
+            src = result_value
+    if not src:
+        return None
+    return {
+        "id": _clean_text(item.get("id")) or f"preview-{index}",
+        "src": src,
+        "url": image_url or (src if _is_probable_image_url(src) and not src.startswith("data:image/") else None),
+        "thumbnail_url": thumbnail_url or None,
+        "markdown": markdown or None,
+    }
+
+
+def _extract_preview_images(result: dict[str, object] | None) -> list[dict[str, object]]:
+    if not isinstance(result, dict):
+        return []
+    payload = result.get("result")
+    if not isinstance(payload, dict):
+        return []
+    previews: list[dict[str, object]] = []
+    data_items = payload.get("data")
+    if isinstance(data_items, list):
+        for index, item in enumerate(data_items, start=1):
+            if isinstance(item, dict) and (preview := _preview_image_from_item(item, index)) is not None:
+                previews.append(preview)
+    output_items = payload.get("output")
+    if isinstance(output_items, list):
+        for index, item in enumerate(output_items, start=1):
+            if not isinstance(item, dict) or _clean_text(item.get("type")) != "image_generation_call":
+                continue
+            if (preview := _preview_image_from_item(item, index)) is not None:
+                previews.append(preview)
+    return previews
+
+
 def _decode_async_image_payload(images_value: object) -> list[tuple[bytes, str, str]]:
     normalized: list[tuple[bytes, str, str]] = []
     if isinstance(images_value, str):
@@ -195,6 +251,7 @@ class JobService:
             "input_image_count": _count_input_images(payload.get("images") or payload.get("image")),
             "result_ready": result is not None,
             "result_count": _count_result_items(result),
+            "preview_images": _extract_preview_images(result),
             "error": job.get("error"),
         }
 
@@ -226,6 +283,8 @@ class JobService:
         return job if str(job.get("api_key_id") or "") == principal.key_id else None
 
     def submit_job(self, job_type: str, payload: dict[str, object], principal: AuthPrincipal) -> dict[str, object]:
+        from services.metadata_db import metadata_db
+
         now = _utc_now()
         model = _clean_text(payload.get("model")) or ("gpt-image-2" if job_type.startswith("images.") else "auto")
         job = {
@@ -254,8 +313,11 @@ class JobService:
                 "api_key_name": job["api_key_name"],
                 "log_path": job["log_path"],
             })
+        public_job = self._public_job(job)
+        metadata_db.record_task_log(str(job["id"]), str(job["log_path"]))
+        metadata_db.record_async_job(public_job, payload=dict(payload or {}))
         self._executor.submit(self._run_job, str(job["id"]))
-        return self._public_job(job)
+        return public_job
 
     def list_jobs(
             self,
@@ -372,10 +434,14 @@ class JobService:
         raise ValueError(f"unsupported async job type: {job_type}")
 
     def _run_job(self, job_id: str) -> None:
+        from services.metadata_db import metadata_db
+
         running = self._update_job(job_id, status="running", error=None)
         if running is None:
             return
         log_path = Path(str(running.get("log_path") or self._task_log_file(running.get("created_at"), job_id)))
+        metadata_db.record_task_log(job_id, str(log_path))
+        metadata_db.record_async_job(self._public_job(running), payload=dict(running.get("payload") or {}))
         with logger.task_context(log_path):
             logger.info({
                 "event": "async_job_started",
@@ -387,15 +453,23 @@ class JobService:
             try:
                 result = self._execute_job(running)
                 result_payload = {"result": result}
-                self._write_json(self._result_file(job_id), result_payload)
-                self._update_job(job_id, status="succeeded", error=None)
+                result_file = self._result_file(job_id)
+                self._write_json(result_file, result_payload)
+                succeeded = self._update_job(job_id, status="succeeded", error=None)
                 logger.info({
                     "event": "async_job_succeeded",
                     "job_id": job_id,
                     "result_count": _count_result_items(result_payload),
                 })
+                if succeeded is not None:
+                    metadata_db.record_async_job(
+                        self._public_job(succeeded, result_payload),
+                        payload=dict(succeeded.get("payload") or {}),
+                        preview_images=_extract_preview_images(result_payload),
+                        result_path=str(result_file),
+                    )
             except Exception as exc:
-                self._update_job(
+                failed = self._update_job(
                     job_id,
                     status="failed",
                     error={"message": str(exc)},
@@ -405,3 +479,8 @@ class JobService:
                     "job_id": job_id,
                     "error": str(exc),
                 })
+                if failed is not None:
+                    metadata_db.record_async_job(
+                        self._public_job(failed),
+                        payload=dict(failed.get("payload") or {}),
+                    )

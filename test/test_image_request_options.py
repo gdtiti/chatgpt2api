@@ -40,6 +40,7 @@ class _CaptureChatGPTService:
         size: str | None = None,
         response_format: str = "b64_json",
         base_url: str | None = None,
+        request_id: str | None = None,
     ) -> dict[str, object]:
         self.last_generation = {
             "prompt": prompt,
@@ -48,6 +49,7 @@ class _CaptureChatGPTService:
             "size": size,
             "response_format": response_format,
             "base_url": base_url,
+            "request_id": request_id,
         }
         return {"created": 1, "data": [{"b64_json": "ZmFrZQ==", "revised_prompt": prompt}]}
 
@@ -60,6 +62,7 @@ class _CaptureChatGPTService:
         size: str | None = None,
         response_format: str = "b64_json",
         base_url: str | None = None,
+        request_id: str | None = None,
     ) -> dict[str, object]:
         image_items = list(images)
         self.last_edit = {
@@ -69,6 +72,7 @@ class _CaptureChatGPTService:
             "size": size,
             "response_format": response_format,
             "base_url": base_url,
+            "request_id": request_id,
             "image_count": len(image_items),
         }
         return {"created": 1, "data": [{"b64_json": "ZmFrZQ==", "revised_prompt": prompt}]}

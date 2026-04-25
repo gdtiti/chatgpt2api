@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from io import BytesIO
 import mimetypes
 from pathlib import Path
 import re
@@ -9,6 +10,7 @@ from time import time
 from typing import Any
 
 from fastapi import HTTPException
+from PIL import Image, ImageOps
 
 from services.config import DATA_DIR, config
 
@@ -27,6 +29,39 @@ _MIME_EXTENSIONS = {
     "image/webp": ".webp",
     "image/gif": ".gif",
 }
+_THUMBNAIL_MAX_SIZE = (512, 512)
+
+
+def _thumbnail_file_name(file_name: str) -> str:
+    path = Path(file_name)
+    return f"{path.stem}-thumb{path.suffix}"
+
+
+def _image_format_for_extension(extension: str) -> str:
+    normalized = extension.lower()
+    if normalized in {".jpg", ".jpeg"}:
+        return "JPEG"
+    if normalized == ".webp":
+        return "WEBP"
+    if normalized == ".gif":
+        return "GIF"
+    return "PNG"
+
+
+def _create_thumbnail_bytes(image_data: bytes, extension: str) -> bytes:
+    with Image.open(BytesIO(image_data)) as source_image:
+        working = ImageOps.exif_transpose(source_image)
+        thumbnail = working.copy()
+        thumbnail.thumbnail(_THUMBNAIL_MAX_SIZE, Image.Resampling.LANCZOS)
+        image_format = _image_format_for_extension(extension)
+        if image_format == "JPEG":
+            if thumbnail.mode not in {"RGB", "L"}:
+                thumbnail = thumbnail.convert("RGB")
+        elif image_format == "PNG" and thumbnail.mode == "P":
+            thumbnail = thumbnail.convert("RGBA")
+        output = BytesIO()
+        thumbnail.save(output, format=image_format)
+        return output.getvalue()
 
 
 def _normalize_id(value: object) -> str:
@@ -63,15 +98,28 @@ def save_image_bytes(
     date_segment = datetime.now().strftime("%Y-%m-%d")
     extension = _guess_extension(image_data, mime_type)
     file_name = f"{_normalize_id(request_id)}-{max(1, int(image_index))}{extension}"
+    thumbnail_file_name = _thumbnail_file_name(file_name)
     target_dir = DATA_DIR / date_segment
     target_dir.mkdir(parents=True, exist_ok=True)
     target_path = target_dir / file_name
+    thumbnail_path = target_dir / thumbnail_file_name
     target_path.write_bytes(image_data)
+    try:
+        thumbnail_bytes = _create_thumbnail_bytes(image_data, extension)
+    except Exception:
+        thumbnail_bytes = image_data
+    thumbnail_path.write_bytes(thumbnail_bytes)
+    image_url = build_image_url(date_segment, file_name, base_url)
+    thumbnail_url = build_image_url(date_segment, thumbnail_file_name, base_url)
     return {
         "date": date_segment,
         "file_name": file_name,
         "relative_path": f"{date_segment}/{file_name}",
-        "url": build_image_url(date_segment, file_name, base_url),
+        "url": image_url,
+        "thumbnail_file_name": thumbnail_file_name,
+        "thumbnail_relative_path": f"{date_segment}/{thumbnail_file_name}",
+        "thumbnail_url": thumbnail_url,
+        "markdown": f"[![image]({thumbnail_url})]({image_url})",
     }
 
 

@@ -73,6 +73,29 @@ def sse_json_stream(items) -> Iterator[str]:
     yield "data: [DONE]\n\n"
 
 
+def responses_sse_stream(items) -> Iterator[str]:
+    yield ": stream-open\n\n"
+    try:
+        for item in items:
+            event_name = "message"
+            if isinstance(item, dict):
+                candidate = str(item.get("type") or "").strip()
+                if candidate:
+                    event_name = candidate
+            yield f"event: {event_name}\n"
+            yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+    except Exception as exc:
+        error_payload = {"type": "error", "error": {"message": str(exc), "type": exc.__class__.__name__}}
+        logger.warning({
+            "event": "responses_sse_stream_error",
+            "error_type": exc.__class__.__name__,
+            "error": str(exc),
+        })
+        yield "event: error\n"
+        yield f"data: {json.dumps(error_payload, ensure_ascii=False)}\n\n"
+    yield "data: [DONE]\n\n"
+
+
 def save_images_from_text(text: str, prefix: str) -> list[Path]:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     matches = re.findall(r"data:image/[^;]+;base64,[A-Za-z0-9+/=]+", text or "")

@@ -54,6 +54,12 @@ class Logger:
 
     def set_system_log_path(self, path: Path) -> None:
         self._system_log_path = Path(path)
+        try:
+            from services.metadata_db import metadata_db
+
+            metadata_db.record_system_file("system_log", str(self._system_log_path))
+        except Exception:
+            pass
 
     def task_context(self, path: Path | None) -> _TaskLogContext:
         return _TaskLogContext(Path(path) if path else None)

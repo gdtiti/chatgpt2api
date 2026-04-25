@@ -18,6 +18,9 @@ type ImageResultsProps = {
 };
 
 function getStoredImageSrc(image: StoredImage) {
+  if (typeof image.thumbnail_url === "string" && image.thumbnail_url.trim()) {
+    return image.thumbnail_url.trim();
+  }
   if (typeof image.url === "string" && image.url.trim()) {
     return image.url.trim();
   }
@@ -25,6 +28,14 @@ function getStoredImageSrc(image: StoredImage) {
     return `data:image/png;base64,${image.b64_json}`;
   }
   return "";
+}
+
+
+function getStoredImageFullSrc(image: StoredImage) {
+  if (typeof image.url === "string" && image.url.trim()) {
+    return image.url.trim();
+  }
+  return getStoredImageSrc(image);
 }
 
 export function ImageResults({
@@ -66,7 +77,9 @@ export function ImageResults({
           src: image.dataUrl,
         }));
         const successfulTurnImages = turn.images.flatMap((image) =>
-          image.status === "success" && getStoredImageSrc(image) ? [{ id: image.id, src: getStoredImageSrc(image) }] : [],
+          image.status === "success" && getStoredImageFullSrc(image)
+            ? [{ id: image.id, src: getStoredImageFullSrc(image) }]
+            : [],
         );
 
         return (
@@ -163,15 +176,39 @@ export function ImageResults({
                                 <span className="rounded-full bg-stone-100 px-2 py-1 text-[10px] text-stone-600">URL</span>
                               ) : null}
                             </div>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="rounded-full border-stone-200 bg-white text-stone-700 hover:bg-stone-50"
-                              onClick={() => void onContinueEdit(selectedConversation.id, image)}
-                            >
-                              <Sparkles className="size-4" />
-                              加入编辑
-                            </Button>
+                            <div className="flex items-center gap-2">
+                              {image.thumbnail_url ? (
+                                <a
+                                  href={image.thumbnail_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-[11px] text-stone-500 hover:text-stone-800"
+                                  onClick={(event) => event.stopPropagation()}
+                                >
+                                  缩略图
+                                </a>
+                              ) : null}
+                              {image.url ? (
+                                <a
+                                  href={image.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-[11px] text-stone-500 hover:text-stone-800"
+                                  onClick={(event) => event.stopPropagation()}
+                                >
+                                  原图
+                                </a>
+                              ) : null}
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="rounded-full border-stone-200 bg-white text-stone-700 hover:bg-stone-50"
+                                onClick={() => void onContinueEdit(selectedConversation.id, image)}
+                              >
+                                <Sparkles className="size-4" />
+                                加入编辑
+                              </Button>
+                            </div>
                           </div>
                         </div>
                       );

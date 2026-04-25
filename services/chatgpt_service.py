@@ -261,7 +261,9 @@ class ChatGPTService:
         if parallel_attempts <= 1:
             return operation_factory()
         errors: list[str] = []
-        with ThreadPoolExecutor(max_workers=parallel_attempts, thread_name_prefix="image-parallel") as executor:
+        executor = ThreadPoolExecutor(max_workers=parallel_attempts, thread_name_prefix="image-parallel")
+        futures: set[Any] = set()
+        try:
             futures = {executor.submit(operation_factory) for _ in range(parallel_attempts)}
             pending = set(futures)
             while pending:
@@ -275,6 +277,8 @@ class ChatGPTService:
                     for pending_future in pending:
                         pending_future.cancel()
                     return result
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
         raise ImageGenerationError(errors[-1] if errors else "image generation failed")
 
     def _run_image_operation_with_strategy(
@@ -289,11 +293,10 @@ class ChatGPTService:
     ) -> dict[str, object]:
         strategy = config.image_failure_strategy
         retry_count = config.image_retry_count if strategy == "retry" else 0
-        parallel_attempts = config.image_parallel_attempts
         last_error = ""
         for attempt_index in range(retry_count + 1):
             try:
-                return self._first_result_or_raise(operation_factory, parallel_attempts)
+                return operation_factory()
             except ImageGenerationError as exc:
                 last_error = str(exc)
                 logger.warning({
@@ -301,7 +304,7 @@ class ChatGPTService:
                     "strategy": strategy,
                     "retry_index": attempt_index,
                     "retry_count": retry_count,
-                    "parallel_attempts": parallel_attempts,
+                    "parallel_attempts": config.image_parallel_attempts,
                     "error": last_error,
                 })
                 if not is_retryable_image_error(last_error):
@@ -540,17 +543,26 @@ class ChatGPTService:
             if not isinstance(item, dict):
                 continue
             b64_json = str(item.get("b64_json") or "").strip()
-            if not b64_json:
+            image_url = str(item.get("url") or "").strip()
+            thumbnail_url = str(item.get("thumbnail_url") or "").strip()
+            markdown = str(item.get("markdown") or "").strip()
+            result_value = b64_json or image_url
+            if not result_value:
                 continue
-            output.append(
-                {
-                    "id": f"ig_{len(output) + 1}",
-                    "type": "image_generation_call",
-                    "status": "completed",
-                    "result": b64_json,
-                    "revised_prompt": str(item.get("revised_prompt") or prompt).strip(),
-                }
-            )
+            output_item = {
+                "id": f"ig_{len(output) + 1}",
+                "type": "image_generation_call",
+                "status": "completed",
+                "result": result_value,
+                "revised_prompt": str(item.get("revised_prompt") or prompt).strip(),
+            }
+            if image_url:
+                output_item["url"] = image_url
+            if thumbnail_url:
+                output_item["thumbnail_url"] = thumbnail_url
+            if markdown:
+                output_item["markdown"] = markdown
+            output.append(output_item)
         return output
 
     def _create_token_image_response(self, body: dict[str, object]) -> dict[str, object]:
@@ -610,6 +622,16 @@ class ChatGPTService:
                 "model": model,
                 "output": [],
                 "parallel_tool_calls": False,
+            },
+        }
+        yield {
+            "type": "response.output_item.added",
+            "output_index": 0,
+            "item": {
+                "id": item_id,
+                "type": "image_generation_call",
+                "status": "in_progress",
+                "result": "",
             },
         }
 
@@ -696,7 +718,14 @@ class ChatGPTService:
                     base_url=base_url,
                     mime_type=str(item.get("mime_type") or "").strip() or None,
                 )
-                formatted_items.append({"url": saved["url"], "revised_prompt": revised_prompt})
+                formatted_items.append(
+                    {
+                        "url": saved["url"],
+                        "thumbnail_url": saved["thumbnail_url"],
+                        "markdown": saved["markdown"],
+                        "revised_prompt": revised_prompt,
+                    }
+                )
         return {"created": created, "data": formatted_items}
 
     @staticmethod
@@ -893,13 +922,15 @@ class ChatGPTService:
         )
 
     @staticmethod
-    def _first_completed_slot_or_raise(
+    def _collect_successful_slots_or_raise(
             total_slots: int,
+            requested_count: int,
             operation_factory: Callable[[int], dict[str, object]],
-    ) -> dict[str, object]:
+    ) -> list[dict[str, object]]:
         if total_slots <= 1:
-            return operation_factory(1)
+            return [operation_factory(1)]
         errors: list[str] = []
+        successful_results: list[dict[str, object]] = []
         executor = ThreadPoolExecutor(max_workers=total_slots, thread_name_prefix="image-fastest")
         futures: dict[Any, int] = {}
         try:
@@ -916,16 +947,34 @@ class ChatGPTService:
                         errors.append(str(exc))
                         continue
                     logger.info({
-                        "event": "image_slot_return_first_success",
+                        "event": "image_slot_return_success",
                         "slot_index": slot_index,
                         "total_slots": total_slots,
+                        "requested_count": requested_count,
+                        "successful_count": len(successful_results) + 1,
                     })
-                    for pending_future in pending:
-                        pending_future.cancel()
-                    return result
+                    successful_results.append(result)
+                    if len(successful_results) >= requested_count:
+                        for pending_future in pending:
+                            pending_future.cancel()
+                        return successful_results
         finally:
             executor.shutdown(wait=False, cancel_futures=True)
+        if successful_results:
+            logger.warning({
+                "event": "image_slot_partial_success",
+                "requested_count": requested_count,
+                "successful_count": len(successful_results),
+                "total_slots": total_slots,
+                "error_count": len(errors),
+            })
+            return successful_results
         raise ImageGenerationError(errors[-1] if errors else "image generation failed")
+
+    @staticmethod
+    def _image_total_slots(requested_count: int) -> int:
+        extra_slots = max(0, int(config.image_parallel_attempts) - 1)
+        return max(1, int(requested_count or 1)) + extra_slots
 
     def generate_with_pool(
             self,
@@ -937,9 +986,11 @@ class ChatGPTService:
             base_url: str = None,
             request_id: str | None = None,
     ):
-        total_slots = max(1, int(n or 1))
-        result = self._first_completed_slot_or_raise(
+        requested_count = max(1, int(n or 1))
+        total_slots = self._image_total_slots(requested_count)
+        results = self._collect_successful_slots_or_raise(
             total_slots,
+            requested_count,
             lambda slot_index: self._run_generate_slot(
                 prompt,
                 model,
@@ -951,9 +1002,15 @@ class ChatGPTService:
                 total_slots,
             ),
         )
+        created = None
+        image_items: list[dict[str, object]] = []
+        for result in results[:requested_count]:
+            if created is None:
+                created = result.get("created")
+            image_items.extend(item for item in result.get("data") or [] if isinstance(item, dict))
         return {
-            "created": result.get("created"),
-            "data": [item for item in result.get("data") or [] if isinstance(item, dict)],
+            "created": created,
+            "data": image_items,
         }
 
     def stream_image_generation(
@@ -1055,9 +1112,11 @@ class ChatGPTService:
         normalized_images = list(images)
         if not normalized_images:
             raise ImageGenerationError("image is required")
-        total_slots = max(1, int(n or 1))
-        result = self._first_completed_slot_or_raise(
+        requested_count = max(1, int(n or 1))
+        total_slots = self._image_total_slots(requested_count)
+        results = self._collect_successful_slots_or_raise(
             total_slots,
+            requested_count,
             lambda slot_index: self._run_edit_slot(
                 prompt,
                 normalized_images,
@@ -1070,9 +1129,15 @@ class ChatGPTService:
                 total_slots,
             ),
         )
+        created = None
+        image_items: list[dict[str, object]] = []
+        for result in results[:requested_count]:
+            if created is None:
+                created = result.get("created")
+            image_items.extend(item for item in result.get("data") or [] if isinstance(item, dict))
         return {
-            "created": result.get("created"),
-            "data": [item for item in result.get("data") or [] if isinstance(item, dict)],
+            "created": created,
+            "data": image_items,
         }
 
     def stream_image_edit(

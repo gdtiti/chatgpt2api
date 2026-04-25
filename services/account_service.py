@@ -173,6 +173,12 @@ class AccountService:
             json.dumps(self._accounts, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
+        try:
+            from services.metadata_db import metadata_db
+
+            metadata_db.record_accounts(self._public_items(self._accounts))
+        except Exception:
+            pass
 
     def _build_remote_headers(self, access_token: str) -> tuple[dict[str, str], str]:
         account = self.get_account(access_token) or {}

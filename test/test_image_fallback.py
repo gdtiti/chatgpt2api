@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import tempfile
 import threading
-import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -79,52 +78,72 @@ class ImageFallbackTests(unittest.TestCase):
             }
         )
         service = ChatGPTService(_FakeAccountService())
-        state = {"count": 0}
+        slow_started = threading.Event()
+        slow_completed = threading.Event()
+        release_slow = threading.Event()
+        call_order: list[int] = []
         lock = threading.Lock()
 
-        def operation(*args):
+        def operation(_prompt, _model, _size, _response_format, _base_url, _request_id, slot_index):
             with lock:
-                state["count"] += 1
-                current = state["count"]
-            if current == 1:
-                time.sleep(0.2)
+                call_order.append(slot_index)
+            if slot_index == 1:
+                slow_started.set()
+                release_slow.wait(timeout=10.0)
+                slow_completed.set()
                 return {"created": 1, "data": [{"b64_json": "c2xvdw==", "revised_prompt": "prompt"}]}
-            time.sleep(0.05)
             return {"created": 1, "data": [{"b64_json": "ZmFzdA==", "revised_prompt": "prompt"}]}
 
         service._call_image_generation_once = operation
-        result = service.generate_with_pool("prompt", "gpt-image-2", 1)
+        try:
+            result = service.generate_with_pool("prompt", "gpt-image-2", 1)
+            self.assertEqual(result["data"][0]["b64_json"], "ZmFzdA==")
+            self.assertTrue(slow_started.wait(timeout=1.0))
+            self.assertFalse(slow_completed.is_set())
+            self.assertCountEqual(call_order, [1, 2])
+        finally:
+            release_slow.set()
+            slow_completed.wait(timeout=1.0)
 
-        self.assertEqual(result["data"][0]["b64_json"], "ZmFzdA==")
-
-    def test_requested_n_returns_first_completed_slot_without_waiting_for_slower_slot(self) -> None:
+    def test_requested_n_returns_first_n_successes_with_one_extra_slot(self) -> None:
         config.data.update(
             {
                 "image_failure_strategy": "fail",
-                "image_parallel_attempts": 1,
+                "image_parallel_attempts": 2,
             }
         )
         service = ChatGPTService(_FakeAccountService())
-        state = {"count": 0}
-        lock = threading.Lock()
+        slow_started = threading.Event()
+        slow_completed = threading.Event()
+        release_slow = threading.Event()
 
-        def operation(*args):
-            with lock:
-                state["count"] += 1
-                current = state["count"]
-            if current == 1:
-                time.sleep(0.25)
+        def operation(_prompt, _model, _size, _response_format, _base_url, _request_id, slot_index):
+            if slot_index == 1:
+                slow_started.set()
+                release_slow.wait(timeout=10.0)
+                slow_completed.set()
                 return {"created": 1, "data": [{"b64_json": "c2xvdw==", "revised_prompt": "prompt"}]}
-            time.sleep(0.05)
-            return {"created": 1, "data": [{"b64_json": "ZmFzdA==", "revised_prompt": "prompt"}]}
+            encoded = base64.b64encode(f"slot-{slot_index}".encode("ascii")).decode("ascii")
+            return {"created": 1, "data": [{"b64_json": encoded, "revised_prompt": f"prompt-{slot_index}"}]}
 
         service._call_image_generation_once = operation
-        started_at = time.perf_counter()
-        result = service.generate_with_pool("prompt", "gpt-image-2", 2)
-        elapsed = time.perf_counter() - started_at
-
-        self.assertEqual(result["data"][0]["b64_json"], "ZmFzdA==")
-        self.assertLess(elapsed, 1.0)
+        try:
+            result = service.generate_with_pool("prompt", "gpt-image-2", 4)
+            self.assertTrue(slow_started.wait(timeout=1.0))
+            self.assertFalse(slow_completed.is_set())
+            self.assertEqual(len(result["data"]), 4)
+            self.assertCountEqual(
+                [item["b64_json"] for item in result["data"]],
+                [
+                    base64.b64encode(b"slot-2").decode("ascii"),
+                    base64.b64encode(b"slot-3").decode("ascii"),
+                    base64.b64encode(b"slot-4").decode("ascii"),
+                    base64.b64encode(b"slot-5").decode("ascii"),
+                ],
+            )
+        finally:
+            release_slow.set()
+            slow_completed.wait(timeout=1.0)
 
     def test_url_response_format_returns_relative_view_path_when_base_url_not_set(self) -> None:
         config.data.update(

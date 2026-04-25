@@ -18,6 +18,8 @@ export type StoredImage = {
   status?: "loading" | "success" | "error";
   b64_json?: string;
   url?: string;
+  thumbnail_url?: string;
+  markdown?: string;
   error?: string;
 };
 
@@ -63,7 +65,9 @@ let imageConversationWriteQueue: Promise<void> = Promise.resolve();
 function normalizeStoredImage(image: StoredImage): StoredImage {
   const b64Json = typeof image.b64_json === "string" ? image.b64_json.trim() : "";
   const url = typeof image.url === "string" ? image.url.trim() : "";
-  const hasImage = Boolean(b64Json || url);
+  const thumbnailUrl = typeof image.thumbnail_url === "string" ? image.thumbnail_url.trim() : "";
+  const markdown = typeof image.markdown === "string" ? image.markdown.trim() : "";
+  const hasImage = Boolean(b64Json || url || thumbnailUrl);
   const nextStatus =
     image.status === "loading" || image.status === "error" || image.status === "success"
       ? image.status
@@ -74,6 +78,8 @@ function normalizeStoredImage(image: StoredImage): StoredImage {
     ...image,
     b64_json: b64Json || undefined,
     url: url || undefined,
+    thumbnail_url: thumbnailUrl || undefined,
+    markdown: markdown || undefined,
     status: nextStatus,
   };
 }

@@ -10,6 +10,7 @@ from typing import Any, Dict, Iterator, Optional
 
 import tiktoken
 from curl_cffi import requests
+from curl_cffi.const import CurlHttpVersion
 from PIL import Image
 
 from services.account_service import account_service
@@ -137,6 +138,11 @@ class OpenAIBackendAPI:
         if extra:
             headers.update(extra)
         return headers
+
+    def _image_request(self, method: str, url: str, **kwargs) -> requests.Response:
+        """图片专用请求统一固定为 HTTP/1.1，避开部分上游/代理下的 HTTP/2 INTERNAL_ERROR。"""
+        kwargs.setdefault("http_version", CurlHttpVersion.V1_1)
+        return self.session.request(method, url, **kwargs)
 
     def _bootstrap_headers(self) -> Dict[str, str]:
         """构造首页预热请求头。"""
@@ -360,7 +366,8 @@ class OpenAIBackendAPI:
             "supported_encodings": ["v1"],
             "client_contextual_info": {"app_name": "chatgpt.com"},
         }
-        response = self.session.post(
+        response = self._image_request(
+            "POST",
             self.base_url + path,
             headers=self._image_headers(path, requirements),
             json=payload,
@@ -411,7 +418,8 @@ class OpenAIBackendAPI:
         width, height = image.size
         mime_type = Image.MIME.get(image.format, "image/png")
         path = "/backend-api/files"
-        response = self.session.post(
+        response = self._image_request(
+            "POST",
             self.base_url + path,
             headers=self._headers(path, {"Content-Type": "application/json", "Accept": "application/json"}),
             json={"file_name": file_name, "file_size": len(data), "use_case": "multimodal", "width": width,
@@ -421,7 +429,8 @@ class OpenAIBackendAPI:
         ensure_ok(response, path)
         upload_meta = response.json()
         time.sleep(0.5)
-        response = self.session.put(
+        response = self._image_request(
+            "PUT",
             upload_meta["upload_url"],
             headers={
                 "Content-Type": mime_type,
@@ -438,7 +447,8 @@ class OpenAIBackendAPI:
         )
         ensure_ok(response, "image_upload")
         path = f"/backend-api/files/{upload_meta['file_id']}/uploaded"
-        response = self.session.post(
+        response = self._image_request(
+            "POST",
             self.base_url + path,
             headers=self._headers(path, {"Content-Type": "application/json", "Accept": "application/json"}),
             data="{}",
@@ -517,7 +527,8 @@ class OpenAIBackendAPI:
             "force_parallel_switch": "auto",
         }
         path = "/backend-api/f/conversation"
-        response = self.session.post(
+        response = self._image_request(
+            "POST",
             self.base_url + path,
             headers=self._image_headers(path, requirements, conduit_token, "text/event-stream"),
             json=payload,
@@ -556,8 +567,12 @@ class OpenAIBackendAPI:
     def _get_conversation(self, conversation_id: str) -> Dict[str, Any]:
         """获取完整 conversation 详情。"""
         path = f"/backend-api/conversation/{conversation_id}"
-        response = self.session.get(self.base_url + path, headers=self._headers(path, {"Accept": "application/json"}),
-                                    timeout=60)
+        response = self._image_request(
+            "GET",
+            self.base_url + path,
+            headers=self._headers(path, {"Accept": "application/json"}),
+            timeout=60,
+        )
         ensure_ok(response, path)
         return response.json()
 
@@ -617,8 +632,12 @@ class OpenAIBackendAPI:
     def _get_file_download_url(self, file_id: str) -> str:
         """获取文件下载地址。"""
         path = f"/backend-api/files/{file_id}/download"
-        response = self.session.get(self.base_url + path, headers=self._headers(path, {"Accept": "application/json"}),
-                                    timeout=60)
+        response = self._image_request(
+            "GET",
+            self.base_url + path,
+            headers=self._headers(path, {"Accept": "application/json"}),
+            timeout=60,
+        )
         ensure_ok(response, path)
         data = response.json()
         return data.get("download_url") or data.get("url") or ""
@@ -626,8 +645,12 @@ class OpenAIBackendAPI:
     def _get_attachment_download_url(self, conversation_id: str, attachment_id: str) -> str:
         """通过 conversation 附件接口获取下载地址。"""
         path = f"/backend-api/conversation/{conversation_id}/attachment/{attachment_id}/download"
-        response = self.session.get(self.base_url + path, headers=self._headers(path, {"Accept": "application/json"}),
-                                    timeout=60)
+        response = self._image_request(
+            "GET",
+            self.base_url + path,
+            headers=self._headers(path, {"Accept": "application/json"}),
+            timeout=60,
+        )
         ensure_ok(response, path)
         data = response.json()
         return data.get("download_url") or data.get("url") or ""
@@ -718,7 +741,7 @@ class OpenAIBackendAPI:
             raise ValueError("response_format must be 'url' or 'b64_json'")
         data = []
         for url in urls:
-            response = self.session.get(url, timeout=120)
+            response = self._image_request("GET", url, timeout=120)
             ensure_ok(response, "image_download")
             if response_format == "b64_json":
                 data.append({"b64_json": base64.b64encode(response.content).decode()})

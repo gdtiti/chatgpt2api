@@ -27,6 +27,7 @@ import {
   fetchAsyncJobResult,
   fetchAsyncJobs,
   type AsyncJobItem,
+  type PreviewImageItem,
   type AsyncJobStatus,
   type AsyncJobSummary,
 } from "@/lib/api";
@@ -101,21 +102,89 @@ function formatJson(value: unknown) {
   return JSON.stringify(value, null, 2);
 }
 
-function extractImageSources(result: unknown) {
-  if (!result || typeof result !== "object" || !Array.isArray((result as { data?: unknown[] }).data)) {
+function normalizePreviewImage(item: unknown, fallbackId: string): PreviewImageItem | null {
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+  const candidate = item as Record<string, unknown>;
+  const id = typeof candidate.id === "string" && candidate.id.trim() ? candidate.id.trim() : fallbackId;
+  const src =
+    typeof candidate.src === "string" && candidate.src.trim()
+      ? candidate.src.trim()
+      : typeof candidate.thumbnail_url === "string" && candidate.thumbnail_url.trim()
+        ? candidate.thumbnail_url.trim()
+        : typeof candidate.url === "string" && candidate.url.trim()
+          ? candidate.url.trim()
+          : "";
+  if (!src) {
+    return null;
+  }
+  return {
+    id,
+    src,
+    url: typeof candidate.url === "string" && candidate.url.trim() ? candidate.url.trim() : undefined,
+    thumbnail_url:
+      typeof candidate.thumbnail_url === "string" && candidate.thumbnail_url.trim()
+        ? candidate.thumbnail_url.trim()
+        : undefined,
+    markdown: typeof candidate.markdown === "string" && candidate.markdown.trim() ? candidate.markdown.trim() : undefined,
+  };
+}
+
+function normalizeImageSource(item: unknown, fallbackId: string): PreviewImageItem | null {
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+  const candidate = item as Record<string, unknown>;
+  const b64Json = typeof candidate.b64_json === "string" ? candidate.b64_json.trim() : "";
+  const imageUrl = typeof candidate.url === "string" ? candidate.url.trim() : "";
+  const thumbnailUrl = typeof candidate.thumbnail_url === "string" ? candidate.thumbnail_url.trim() : "";
+  const resultValue = typeof candidate.result === "string" ? candidate.result.trim() : "";
+  const src =
+    thumbnailUrl ||
+    imageUrl ||
+    (b64Json ? `data:image/png;base64,${b64Json}` : "") ||
+    (resultValue.startsWith("data:image/") || resultValue.startsWith("http") || resultValue.startsWith("/api/")
+      ? resultValue
+      : resultValue
+        ? `data:image/png;base64,${resultValue}`
+        : "");
+  if (!src) {
+    return null;
+  }
+  return {
+    id: typeof candidate.id === "string" && candidate.id.trim() ? candidate.id.trim() : fallbackId,
+    src,
+    url: imageUrl || (resultValue.startsWith("http") || resultValue.startsWith("/api/") ? resultValue : undefined),
+    thumbnail_url: thumbnailUrl || undefined,
+    markdown: typeof candidate.markdown === "string" && candidate.markdown.trim() ? candidate.markdown.trim() : undefined,
+  };
+}
+
+function extractImageSources(result: unknown, job?: AsyncJobItem | null) {
+  const previewImages = Array.isArray(job?.preview_images)
+    ? job.preview_images
+        .map((item, index) => normalizePreviewImage(item, `preview-${index}`))
+        .filter((item): item is PreviewImageItem => item !== null)
+    : [];
+  if (previewImages.length > 0) {
+    return previewImages;
+  }
+  if (!result || typeof result !== "object") {
     return [];
   }
-  return (result as { data: Array<Record<string, unknown>> }).data.flatMap((item, index) => {
-    const b64Json = typeof item.b64_json === "string" ? item.b64_json.trim() : "";
-    if (b64Json) {
-      return [{ id: `image-${index}`, src: `data:image/png;base64,${b64Json}` }];
-    }
-    const imageUrl = typeof item.url === "string" ? item.url.trim() : "";
-    if (imageUrl) {
-      return [{ id: `image-${index}`, src: imageUrl }];
-    }
-    return [];
-  });
+  const payload = result as { data?: unknown[]; output?: unknown[] };
+  const dataImages = Array.isArray(payload.data)
+    ? payload.data
+        .map((item, index) => normalizeImageSource(item, `image-${index}`))
+        .filter((item): item is PreviewImageItem => item !== null)
+    : [];
+  const outputImages = Array.isArray(payload.output)
+    ? payload.output
+        .map((item, index) => normalizeImageSource(item, `output-${index}`))
+        .filter((item): item is PreviewImageItem => item !== null)
+    : [];
+  return [...dataImages, ...outputImages];
 }
 
 export default function JobsPage() {
@@ -147,7 +216,7 @@ export default function JobsPage() {
     () => jobs.some((job) => job.status === "queued" || job.status === "running"),
     [jobs],
   );
-  const detailImages = useMemo(() => extractImageSources(detailResult), [detailResult]);
+  const detailImages = useMemo(() => extractImageSources(detailResult, detailJob), [detailJob, detailResult]);
 
   const loadJobs = async (silent = false) => {
     if (!silent) {
@@ -395,6 +464,24 @@ export default function JobsPage() {
                         <td className="px-4 py-4">
                           <div className="max-w-[260px] space-y-1">
                             <div className="line-clamp-2 text-sm text-stone-700">{formatPrompt(job)}</div>
+                            {Array.isArray(job.preview_images) && job.preview_images.length > 0 ? (
+                              <div className="flex flex-wrap gap-2 pt-1">
+                                {job.preview_images.slice(0, 3).map((item, index) => {
+                                  const preview = normalizePreviewImage(item, `${job.id}-preview-${index}`);
+                                  if (!preview) {
+                                    return null;
+                                  }
+                                  return (
+                                    <img
+                                      key={preview.id}
+                                      src={preview.src}
+                                      alt={`任务预览 ${index + 1}`}
+                                      className="size-10 rounded-lg border border-stone-200 object-cover"
+                                    />
+                                  );
+                                })}
+                              </div>
+                            ) : null}
                             <div className="text-xs text-stone-400">创建于 {formatTime(job.created_at)}</div>
                           </div>
                         </td>
@@ -566,22 +653,33 @@ export default function JobsPage() {
                   {detailImages.length > 0 ? (
                     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                       {detailImages.map((image, index) => (
-                        <button
-                          key={image.id}
-                          type="button"
-                          className="overflow-hidden rounded-2xl border border-stone-200 bg-stone-50 text-left transition hover:border-stone-300"
-                          onClick={() => {
-                            setLightboxImages(detailImages);
-                            setLightboxIndex(index);
-                            setLightboxOpen(true);
-                          }}
-                        >
-                          <img src={image.src} alt={`任务结果 ${index + 1}`} className="aspect-square w-full object-cover" />
-                        </button>
+                        <div key={image.id} className="space-y-2 overflow-hidden rounded-2xl border border-stone-200 bg-stone-50 p-2">
+                          <button
+                            type="button"
+                            className="overflow-hidden rounded-xl text-left transition hover:opacity-95"
+                            onClick={() => {
+                              setLightboxImages(detailImages);
+                              setLightboxIndex(index);
+                              setLightboxOpen(true);
+                            }}
+                          >
+                            <img src={image.src} alt={`任务结果 ${index + 1}`} className="aspect-square w-full object-cover" />
+                          </button>
+                          {image.url ? (
+                            <a
+                              href={image.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="block break-all px-1 text-[11px] text-stone-500 hover:text-stone-800"
+                            >
+                              查看原图
+                            </a>
+                          ) : null}
+                        </div>
                       ))}
                     </div>
                   ) : detailJob.status === "succeeded" ? (
-                    <pre className="max-h-[320px] overflow-auto rounded-2xl bg-stone-950 px-4 py-4 text-xs leading-6 text-stone-100">
+                    <pre className="max-h-[320px] overflow-auto whitespace-pre-wrap break-words rounded-2xl bg-stone-950 px-4 py-4 text-xs leading-6 text-stone-100">
                       <code>{formatJson(detailResult)}</code>
                     </pre>
                   ) : (
@@ -596,7 +694,7 @@ export default function JobsPage() {
                     <div className="text-xs text-stone-400">日志文件</div>
                     <code className="mt-2 block break-all text-xs text-stone-700">{detailLogPath || detailJob.log_path || "—"}</code>
                   </div>
-                  <pre className="max-h-[360px] overflow-auto rounded-2xl bg-stone-950 px-4 py-4 text-xs leading-6 text-stone-100">
+                  <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap break-words rounded-2xl bg-stone-950 px-4 py-4 text-xs leading-6 text-stone-100">
                     <code>{detailLog || "当前暂无日志内容。"}</code>
                   </pre>
                 </div>

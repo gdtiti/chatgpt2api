@@ -171,13 +171,45 @@ export function ImageComposer({
           </div>
         ) : null}
 
+        <div className="mb-3 flex flex-wrap items-center gap-2 px-1">
+          <ModeButton active={mode === "generate"} onClick={() => onModeChange("generate")}>
+            文生图
+          </ModeButton>
+          <ModeButton active={mode === "edit"} onClick={() => onModeChange("edit")}>
+            图生图
+          </ModeButton>
+          {mode === "edit" ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="h-10 rounded-full border-stone-200 bg-white px-4 text-sm font-medium text-stone-700 shadow-none"
+              onClick={onPickReferenceImage}
+            >
+              <ImagePlus className="size-4" />
+              {referenceImages.length > 0 ? "继续添加参考图" : "上传参考图"}
+            </Button>
+          ) : null}
+          <div className="rounded-full bg-stone-100 px-3 py-2 text-xs font-medium text-stone-600">
+            剩余图片额度 {availableQuota}
+          </div>
+          {requestQuota ? (
+            <div className="rounded-full bg-stone-100 px-3 py-2 text-xs font-medium text-stone-600">
+              剩余请求次数 {requestQuota}
+            </div>
+          ) : null}
+          {isTestMode ? (
+            <div className="rounded-full bg-sky-50 px-3 py-2 text-xs font-medium text-sky-700">测试模式</div>
+          ) : null}
+          {activeTaskCount > 0 ? (
+            <div className="flex items-center gap-1.5 rounded-full bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">
+              <LoaderCircle className="size-3 animate-spin" />
+              {activeTaskCount} 个任务处理中或排队中
+            </div>
+          ) : null}
+        </div>
+
         <div className="overflow-hidden rounded-[32px] border border-stone-200 bg-white">
-          <div
-            className="relative cursor-text"
-            onClick={() => {
-              textareaRef.current?.focus();
-            }}
-          >
+          <div className="cursor-text" onClick={() => textareaRef.current?.focus()}>
             <ImageLightbox
               images={lightboxImages}
               currentIndex={lightboxIndex}
@@ -199,73 +231,34 @@ export function ImageComposer({
                   void onSubmit();
                 }
               }}
-              className="min-h-[148px] resize-none rounded-[32px] border-0 bg-transparent px-6 pt-6 pb-20 text-[15px] leading-7 text-stone-900 shadow-none placeholder:text-stone-400 focus-visible:ring-0"
+              className="min-h-[148px] resize-none rounded-none border-0 bg-transparent px-6 pt-6 pb-6 text-[15px] leading-7 text-stone-900 shadow-none placeholder:text-stone-400 focus-visible:ring-0"
             />
 
-            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-white via-white/95 to-transparent px-4 pb-4 pt-6 sm:px-6">
-              <div className="flex flex-col gap-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <ModeButton active={mode === "generate"} onClick={() => onModeChange("generate")}>
-                    文生图
-                  </ModeButton>
-                  <ModeButton active={mode === "edit"} onClick={() => onModeChange("edit")}>
-                    图生图
-                  </ModeButton>
-                  {mode === "edit" ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="h-10 rounded-full border-stone-200 bg-white px-4 text-sm font-medium text-stone-700 shadow-none"
-                      onClick={onPickReferenceImage}
-                    >
-                      <ImagePlus className="size-4" />
-                      {referenceImages.length > 0 ? "继续添加参考图" : "上传参考图"}
-                    </Button>
-                  ) : null}
-                  <div className="rounded-full bg-stone-100 px-3 py-2 text-xs font-medium text-stone-600">
-                    剩余图片额度 {availableQuota}
-                  </div>
-                  {requestQuota ? (
-                    <div className="rounded-full bg-stone-100 px-3 py-2 text-xs font-medium text-stone-600">
-                      剩余请求次数 {requestQuota}
-                    </div>
-                  ) : null}
-                  {isTestMode ? (
-                    <div className="rounded-full bg-sky-50 px-3 py-2 text-xs font-medium text-sky-700">测试模式</div>
-                  ) : null}
-                  {activeTaskCount > 0 ? (
-                    <div className="flex items-center gap-1.5 rounded-full bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">
-                      <LoaderCircle className="size-3 animate-spin" />
-                      {activeTaskCount} 个任务处理中或排队中
-                    </div>
-                  ) : null}
+            <div className="border-t border-stone-100 bg-white px-4 pb-4 pt-4 sm:px-6">
+              <div className="flex items-end justify-between gap-3">
+                <div className="min-w-0 px-1 text-[11px] text-stone-400">
+                  当前参数: model={imageModel} / size={imageSize || "1:1"} / transport={requestMode}
                 </div>
 
-                <div className="flex items-end justify-between gap-3">
-                  <div className="min-w-0 px-1 text-[11px] text-stone-400">
-                    当前参数: model={imageModel} / size={imageSize || "1:1"} / transport={requestMode}
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="h-11 rounded-full border-stone-200 bg-white px-4 text-sm font-medium text-stone-700"
-                      onClick={openSettings}
-                    >
-                      <Settings2 className="size-4" />
-                      设置
-                    </Button>
-                    <button
-                      type="button"
-                      onClick={() => void onSubmit()}
-                      disabled={!prompt.trim() || (mode === "edit" && referenceImages.length === 0)}
-                      className="inline-flex size-11 shrink-0 items-center justify-center rounded-full bg-stone-950 text-white transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-300"
-                      aria-label={mode === "edit" ? "编辑图片" : "生成图片"}
-                    >
-                      <ArrowUp className="size-4" />
-                    </button>
-                  </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-11 rounded-full border-stone-200 bg-white px-4 text-sm font-medium text-stone-700"
+                    onClick={openSettings}
+                  >
+                    <Settings2 className="size-4" />
+                    设置
+                  </Button>
+                  <button
+                    type="button"
+                    onClick={() => void onSubmit()}
+                    disabled={!prompt.trim() || (mode === "edit" && referenceImages.length === 0)}
+                    className="inline-flex size-11 shrink-0 items-center justify-center rounded-full bg-stone-950 text-white transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-300"
+                    aria-label={mode === "edit" ? "编辑图片" : "生成图片"}
+                  >
+                    <ArrowUp className="size-4" />
+                  </button>
                 </div>
               </div>
             </div>

@@ -10,6 +10,7 @@ import { ImageLightbox } from "@/components/image-lightbox";
 import {
   createAsyncJob,
   editImage,
+  fetchAuthSession,
   fetchAccounts,
   fetchAsyncJob,
   fetchAsyncJobResult,
@@ -17,7 +18,9 @@ import {
   generateImage,
   streamAsyncJobEvents,
   type Account,
+  type AuthSession,
 } from "@/lib/api";
+import { getStoredAuthSession, setStoredAuthSession } from "@/store/auth";
 import {
   clearImageConversations,
   deleteImageConversation,
@@ -32,6 +35,11 @@ import {
   type StoredImage,
   type StoredReferenceImage,
 } from "@/store/image-conversations";
+import {
+  DEFAULT_IMAGE_PREFERENCES,
+  getStoredImagePreferences,
+  setStoredImagePreferences,
+} from "@/store/image-preferences";
 
 const ACTIVE_CONVERSATION_STORAGE_KEY = "chatgpt2api:image_active_conversation_id";
 const activeConversationQueueIds = new Set<string>();
@@ -62,6 +70,13 @@ function formatConversationTime(value: string) {
 function formatAvailableQuota(accounts: Account[]) {
   const availableAccounts = accounts.filter((account) => account.status !== "禁用");
   return String(availableAccounts.reduce((sum, account) => sum + Math.max(0, account.quota), 0));
+}
+
+function formatRemainingLimit(value: number | null | undefined) {
+  if (value === null || value === undefined) {
+    return "不限";
+  }
+  return String(Math.max(0, value));
 }
 
 function createId() {
@@ -220,7 +235,6 @@ async function recoverConversationHistory(items: ImageConversation[]) {
 }
 
 export default function ImagePage() {
-  const didLoadQuotaRef = useRef(false);
   const conversationsRef = useRef<ImageConversation[]>([]);
   const resultsViewportRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -237,9 +251,11 @@ export default function ImagePage() {
   const [imageMode, setImageMode] = useState<ImageConversationMode>("generate");
   const [referenceImageFiles, setReferenceImageFiles] = useState<File[]>([]);
   const [referenceImages, setReferenceImages] = useState<StoredReferenceImage[]>([]);
+  const [authSession, setAuthSession] = useState<AuthSession | null>(null);
   const [conversations, setConversations] = useState<ImageConversation[]>([]);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
+  const [preferencesReady, setPreferencesReady] = useState(false);
   const [availableQuota, setAvailableQuota] = useState("加载中...");
   const [lightboxImages, setLightboxImages] = useState<ImageLightboxItem[]>([]);
   const [lightboxOpen, setLightboxOpen] = useState(false);
@@ -262,10 +278,78 @@ export default function ImagePage() {
       }, 0),
     [conversations],
   );
+  const isClientConsole = authSession?.kind === "client";
+  const requestQuota = isClientConsole ? formatRemainingLimit(authSession?.remaining_requests) : null;
+  const modelLocked = availableModels.length <= 1;
 
   useEffect(() => {
     conversationsRef.current = conversations;
   }, [conversations]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadSession = async () => {
+      const storedSession = await getStoredAuthSession();
+      if (!cancelled) {
+        setAuthSession(storedSession);
+      }
+      try {
+        const response = await fetchAuthSession();
+        if (cancelled) {
+          return;
+        }
+        setAuthSession(response.session);
+        await setStoredAuthSession(response.session);
+      } catch {
+        if (!cancelled && storedSession?.kind === "client") {
+          setAvailableQuota(formatRemainingLimit(storedSession.remaining_image_count));
+        }
+      }
+    };
+
+    void loadSession();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadPreferences = async () => {
+      const preferences = await getStoredImagePreferences();
+      if (cancelled) {
+        return;
+      }
+      setImageModel(preferences.imageModel || DEFAULT_IMAGE_PREFERENCES.imageModel);
+      setRequestMode(preferences.requestMode);
+      setImageCount(preferences.imageCount);
+      setImageSizePreset(preferences.imageSizePreset);
+      setCustomImageSize(preferences.customImageSize);
+      setImageMode(preferences.imageMode);
+      setPreferencesReady(true);
+    };
+
+    void loadPreferences();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!preferencesReady) {
+      return;
+    }
+    void setStoredImagePreferences({
+      imageModel,
+      requestMode,
+      imageCount,
+      imageSizePreset,
+      customImageSize,
+      imageMode,
+    });
+  }, [customImageSize, imageCount, imageModel, imageMode, imageSizePreset, preferencesReady, requestMode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -328,21 +412,44 @@ export default function ImagePage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (imageSizePreset === CUSTOM_SIZE_VALUE) {
+      const value = customImageSize.trim();
+      if (value) {
+        setImageSize(value);
+      }
+      return;
+    }
+    setImageSize(imageSizePreset);
+  }, [customImageSize, imageSizePreset]);
+
+  const refreshSessionSnapshot = useCallback(async () => {
+    try {
+      const response = await fetchAuthSession();
+      setAuthSession(response.session);
+      await setStoredAuthSession(response.session);
+      return response.session;
+    } catch {
+      return authSession;
+    }
+  }, [authSession]);
+
   const loadQuota = useCallback(async () => {
+    const currentSession =
+      authSession?.kind === "client" ? await refreshSessionSnapshot() : authSession ?? (await refreshSessionSnapshot());
+    if (currentSession?.kind === "client") {
+      setAvailableQuota(formatRemainingLimit(currentSession.remaining_image_count));
+      return;
+    }
     try {
       const data = await fetchAccounts();
       setAvailableQuota(formatAvailableQuota(data.items));
     } catch {
       setAvailableQuota((prev) => (prev === "加载中..." ? "--" : prev));
     }
-  }, []);
+  }, [authSession, refreshSessionSnapshot]);
 
   useEffect(() => {
-    if (didLoadQuotaRef.current) {
-      return;
-    }
-    didLoadQuotaRef.current = true;
-
     const handleFocus = () => {
       void loadQuota();
     };
@@ -968,12 +1075,15 @@ export default function ImagePage() {
             prompt={imagePrompt}
             imageModel={imageModel}
             imageModels={availableModels}
+            modelLocked={modelLocked}
             requestMode={requestMode}
             imageCount={imageCount}
             imageSize={resolvedImageSize || imageSize}
             imageSizePreset={imageSizePreset}
             customImageSize={customImageSize}
             availableQuota={availableQuota}
+            requestQuota={requestQuota}
+            isTestMode={isClientConsole}
             activeTaskCount={activeTaskCount}
             referenceImages={referenceImages}
             textareaRef={textareaRef}

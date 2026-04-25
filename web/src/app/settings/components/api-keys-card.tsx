@@ -49,6 +49,18 @@ function toDatetimeLocalValue(value?: string | null) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+function parseOptionalLimit(value: string) {
+  const normalized = value.trim();
+  if (!normalized) {
+    return null;
+  }
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+  return Math.floor(parsed);
+}
+
 export function APIKeysCard() {
   const [items, setItems] = useState<APIKeyItem[]>([]);
   const [models, setModels] = useState<ModelItem[]>([]);
@@ -57,6 +69,8 @@ export function APIKeysCard() {
   const [workingKeyId, setWorkingKeyId] = useState<string | null>(null);
   const [newKeyName, setNewKeyName] = useState("");
   const [newKeyExpiresAt, setNewKeyExpiresAt] = useState("");
+  const [newKeyMaxRequests, setNewKeyMaxRequests] = useState("");
+  const [newKeyMaxImageCount, setNewKeyMaxImageCount] = useState("");
   const [selectedModels, setSelectedModels] = useState<string[]>([]);
   const [latestPlainTextKey, setLatestPlainTextKey] = useState<string>("");
 
@@ -113,11 +127,15 @@ export function APIKeysCard() {
         allowed_models: selectedModels,
         scopes: ["inference"],
         expires_at: newKeyExpiresAt ? new Date(newKeyExpiresAt).toISOString() : null,
+        max_requests: parseOptionalLimit(newKeyMaxRequests),
+        max_image_count: parseOptionalLimit(newKeyMaxImageCount),
       });
       setItems((current) => [data.item, ...current]);
       setLatestPlainTextKey(data.plain_text);
       setNewKeyName("");
       setNewKeyExpiresAt("");
+      setNewKeyMaxRequests("");
+      setNewKeyMaxImageCount("");
       setSelectedModels([]);
       toast.success("API Key 已创建");
     } catch (error) {
@@ -224,6 +242,32 @@ export function APIKeysCard() {
                 />
                 <p className="text-xs text-stone-500">留空表示长期有效。</p>
               </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <label className="text-sm text-stone-700">请求次数上限</label>
+                  <Input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={newKeyMaxRequests}
+                    onChange={(event) => setNewKeyMaxRequests(event.target.value)}
+                    placeholder="留空表示不限"
+                    className="h-10 rounded-xl border-stone-200 bg-white"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm text-stone-700">图片额度上限</label>
+                  <Input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={newKeyMaxImageCount}
+                    onChange={(event) => setNewKeyMaxImageCount(event.target.value)}
+                    placeholder="留空表示不限"
+                    className="h-10 rounded-xl border-stone-200 bg-white"
+                  />
+                </div>
+              </div>
             </div>
 
             <div className="space-y-3">
@@ -298,6 +342,14 @@ export function APIKeysCard() {
                         <div>最近使用：{formatTime(item.last_used_at)}</div>
                         <div>调用次数：{item.request_count}</div>
                         <div>过期时间：{item.expires_at ? formatTime(item.expires_at) : "长期有效"}</div>
+                        <div>
+                          请求上限：
+                          {item.max_requests ? ` ${item.request_count}/${item.max_requests}，剩余 ${item.remaining_requests ?? 0}` : " 不限"}
+                        </div>
+                        <div>
+                          图片额度：
+                          {item.max_image_count ? ` ${item.image_count}/${item.max_image_count}，剩余 ${item.remaining_image_count ?? 0}` : " 不限"}
+                        </div>
                       </div>
                       <div className="flex flex-wrap gap-2">
                         {(item.allowed_models.length > 0 ? item.allowed_models : ["全部模型"]).map((modelId) => (

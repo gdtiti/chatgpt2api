@@ -5,7 +5,13 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from api.support import ensure_model_access, raise_image_quota_error, require_client_principal, resolve_image_base_url
+from api.support import (
+    ensure_model_access,
+    raise_image_quota_error,
+    require_client_principal,
+    reserve_image_quota,
+    resolve_image_base_url,
+)
 from services.account_service import account_service
 from services.chatgpt_service import ChatGPTService, ImageGenerationError
 from utils.helper import is_image_chat_request, sse_json_stream
@@ -68,6 +74,7 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
     ):
         principal = require_client_principal(authorization)
         ensure_model_access(principal, body.model)
+        reserve_image_quota(principal, body.n)
         base_url = resolve_image_base_url(request)
         if body.stream:
             try:
@@ -106,6 +113,7 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
         ensure_model_access(principal, model)
         if n < 1 or n > 4:
             raise HTTPException(status_code=400, detail={"error": "n must be between 1 and 4"})
+        reserve_image_quota(principal, n)
         uploads = [*(image or []), *(image_list or [])]
         if not uploads:
             raise HTTPException(status_code=400, detail={"error": "image file is required"})

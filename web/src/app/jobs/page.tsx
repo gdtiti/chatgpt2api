@@ -1,22 +1,35 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { ComponentProps } from "react";
-import { CheckCircle2, ChevronRight, Clock3, Copy, Image, ListFilter, LoaderCircle, RefreshCw, XCircle } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
+import {
+  CheckCircle2,
+  ChevronRight,
+  Clock3,
+  Copy,
+  FileText,
+  Image as ImageIcon,
+  ListFilter,
+  LoaderCircle,
+  RefreshCw,
+  XCircle,
+} from "lucide-react";
 import { toast } from "sonner";
 
+import { ImageLightbox } from "@/components/image-lightbox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { fetchAsyncJob, fetchAsyncJobResult, fetchAsyncJobs, type AsyncJobItem, type AsyncJobStatus, type AsyncJobSummary } from "@/lib/api";
+  fetchAsyncJob,
+  fetchAsyncJobLog,
+  fetchAsyncJobResult,
+  fetchAsyncJobs,
+  type AsyncJobItem,
+  type AsyncJobStatus,
+  type AsyncJobSummary,
+} from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const statusOptions: Array<{ value: AsyncJobStatus | "all"; label: string }> = [
@@ -48,6 +61,8 @@ const statusMeta: Record<
   succeeded: { label: "已成功", badge: "success", icon: CheckCircle2 },
   failed: { label: "已失败", badge: "danger", icon: XCircle },
 };
+
+type DetailTab = "result" | "log";
 
 function formatJobType(value: string) {
   const matched = typeOptions.find((item) => item.value === value);
@@ -81,9 +96,26 @@ function formatPrompt(job: AsyncJobItem) {
 
 function formatJson(value: unknown) {
   if (value === null || value === undefined) {
-    return "当前暂无结果，任务可能仍在执行中。";
+    return "当前暂无结果。";
   }
   return JSON.stringify(value, null, 2);
+}
+
+function extractImageSources(result: unknown) {
+  if (!result || typeof result !== "object" || !Array.isArray((result as { data?: unknown[] }).data)) {
+    return [];
+  }
+  return (result as { data: Array<Record<string, unknown>> }).data.flatMap((item, index) => {
+    const b64Json = typeof item.b64_json === "string" ? item.b64_json.trim() : "";
+    if (b64Json) {
+      return [{ id: `image-${index}`, src: `data:image/png;base64,${b64Json}` }];
+    }
+    const imageUrl = typeof item.url === "string" ? item.url.trim() : "";
+    if (imageUrl) {
+      return [{ id: `image-${index}`, src: imageUrl }];
+    }
+    return [];
+  });
 }
 
 export default function JobsPage() {
@@ -103,12 +135,19 @@ export default function JobsPage() {
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailJob, setDetailJob] = useState<AsyncJobItem | null>(null);
   const [detailResult, setDetailResult] = useState<unknown>(null);
+  const [detailLog, setDetailLog] = useState("");
+  const [detailLogPath, setDetailLogPath] = useState<string | null>(null);
+  const [detailTab, setDetailTab] = useState<DetailTab>("result");
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
+  const [lightboxImages, setLightboxImages] = useState<Array<{ id: string; src: string }>>([]);
+  const [lightboxIndex, setLightboxIndex] = useState(0);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
 
   const hasActiveJobs = useMemo(
     () => jobs.some((job) => job.status === "queued" || job.status === "running"),
     [jobs],
   );
+  const detailImages = useMemo(() => extractImageSources(detailResult), [detailResult]);
 
   const loadJobs = async (silent = false) => {
     if (!silent) {
@@ -144,7 +183,7 @@ export default function JobsPage() {
       return;
     }
     void loadJobs();
-  }, [statusFilter, typeFilter, limit]);
+  }, [limit, statusFilter, typeFilter]);
 
   useEffect(() => {
     if (!hasActiveJobs) {
@@ -154,21 +193,35 @@ export default function JobsPage() {
       void loadJobs(true);
     }, 3000);
     return () => window.clearInterval(timer);
-  }, [hasActiveJobs, statusFilter, typeFilter, limit]);
+  }, [hasActiveJobs, limit, statusFilter, typeFilter]);
 
   const handleOpenDetail = async (job: AsyncJobItem) => {
     setDetailOpen(true);
     setDetailJob(job);
     setDetailResult(null);
+    setDetailLog("");
+    setDetailLogPath(job.log_path || null);
+    setDetailTab(job.status === "succeeded" ? "result" : "log");
     setIsLoadingDetail(true);
     try {
-      if (job.status === "succeeded") {
-        const data = await fetchAsyncJobResult(job.id);
-        setDetailJob(data.job);
-        setDetailResult(data.result);
-      } else {
-        const data = await fetchAsyncJob(job.id);
-        setDetailJob(data.job);
+      const [logResponse, detailResponse] = await Promise.allSettled([
+        fetchAsyncJobLog(job.id),
+        job.status === "succeeded" ? fetchAsyncJobResult(job.id) : fetchAsyncJob(job.id),
+      ]);
+
+      if (logResponse.status === "fulfilled") {
+        setDetailLog(logResponse.value.log_text || "");
+        setDetailLogPath(logResponse.value.log_path || logResponse.value.job.log_path || null);
+        setDetailJob(logResponse.value.job);
+      }
+
+      if (detailResponse.status === "fulfilled") {
+        if ("result" in detailResponse.value) {
+          setDetailJob(detailResponse.value.job);
+          setDetailResult(detailResponse.value.result);
+        } else {
+          setDetailJob(detailResponse.value.job);
+        }
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "加载任务详情失败");
@@ -199,7 +252,7 @@ export default function JobsPage() {
             ) : null}
           </div>
           <p className="max-w-[920px] text-sm leading-7 text-stone-500">
-            用于追踪异步任务的排队、执行、成功和失败情况。成功任务可直接查看结果，失败任务可查看错误信息和日志路径。
+            用于追踪异步任务的排队、执行、成功和失败情况。图片任务在详情里优先展示结果图，日志独立放在日志 tab。
           </p>
         </div>
 
@@ -379,7 +432,7 @@ export default function JobsPage() {
                             className="h-9 rounded-xl border-stone-200 bg-white px-3 text-stone-700"
                             onClick={() => void handleOpenDetail(job)}
                           >
-                            {job.status === "succeeded" ? <Image className="size-4" /> : <ChevronRight className="size-4" />}
+                            {job.status === "succeeded" ? <ImageIcon className="size-4" /> : <ChevronRight className="size-4" />}
                             {job.status === "succeeded" ? "查看结果" : "查看详情"}
                           </Button>
                         </td>
@@ -406,10 +459,10 @@ export default function JobsPage() {
       </section>
 
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
-        <DialogContent className="w-[min(92vw,920px)] max-w-[920px] rounded-[28px]">
+        <DialogContent className="w-[min(92vw,1040px)] max-w-[1040px] rounded-[28px]">
           <DialogHeader>
             <DialogTitle>任务详情</DialogTitle>
-            <DialogDescription>查看当前任务状态、请求摘要和执行结果。</DialogDescription>
+            <DialogDescription>查看当前任务状态、结果和日志。</DialogDescription>
           </DialogHeader>
 
           {isLoadingDetail ? (
@@ -421,7 +474,9 @@ export default function JobsPage() {
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                 <div className="rounded-2xl bg-stone-50 px-4 py-3">
                   <div className="text-xs text-stone-400">状态</div>
-                  <div className="mt-1 text-sm font-medium text-stone-800">{statusMeta[(detailJob.status as AsyncJobStatus) || "queued"]?.label || detailJob.status}</div>
+                  <div className="mt-1 text-sm font-medium text-stone-800">
+                    {statusMeta[(detailJob.status as AsyncJobStatus) || "queued"]?.label || detailJob.status}
+                  </div>
                 </div>
                 <div className="rounded-2xl bg-stone-50 px-4 py-3">
                   <div className="text-xs text-stone-400">类型</div>
@@ -439,7 +494,7 @@ export default function JobsPage() {
 
               <div className="rounded-2xl border border-stone-200 bg-white px-4 py-4">
                 <div className="text-sm font-medium text-stone-800">任务信息</div>
-                  <div className="mt-3 grid gap-3 text-sm text-stone-600 md:grid-cols-2">
+                <div className="mt-3 grid gap-3 text-sm text-stone-600 md:grid-cols-2">
                   <div>
                     <span className="text-stone-400">任务 ID：</span>
                     <code className="break-all text-xs text-stone-700">{detailJob.id}</code>
@@ -464,10 +519,6 @@ export default function JobsPage() {
                     <span className="text-stone-400">参考图数量：</span>
                     {detailJob.input_image_count || 0}
                   </div>
-                  <div className="md:col-span-2">
-                    <span className="text-stone-400">日志文件：</span>
-                    <code className="break-all text-xs text-stone-700">{detailJob.log_path || "—"}</code>
-                  </div>
                 </div>
                 <div className="mt-4 space-y-2">
                   <div className="text-xs text-stone-400">请求摘要</div>
@@ -485,16 +536,83 @@ export default function JobsPage() {
                 ) : null}
               </div>
 
-              <div className="space-y-2">
-                <div className="text-sm font-medium text-stone-800">执行结果</div>
-                <pre className="max-h-[320px] overflow-auto rounded-2xl bg-stone-950 px-4 py-4 text-xs leading-6 text-stone-100">
-                  <code>{formatJson(detailResult)}</code>
-                </pre>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className={cn(
+                    "rounded-full px-4 py-2 text-sm font-medium transition",
+                    detailTab === "result" ? "bg-stone-950 text-white" : "bg-stone-100 text-stone-600 hover:bg-stone-200",
+                  )}
+                  onClick={() => setDetailTab("result")}
+                >
+                  结果
+                </button>
+                <button
+                  type="button"
+                  className={cn(
+                    "inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition",
+                    detailTab === "log" ? "bg-stone-950 text-white" : "bg-stone-100 text-stone-600 hover:bg-stone-200",
+                  )}
+                  onClick={() => setDetailTab("log")}
+                >
+                  <FileText className="size-4" />
+                  日志
+                </button>
               </div>
+
+              {detailTab === "result" ? (
+                <div className="space-y-3">
+                  <div className="text-sm font-medium text-stone-800">执行结果</div>
+                  {detailImages.length > 0 ? (
+                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                      {detailImages.map((image, index) => (
+                        <button
+                          key={image.id}
+                          type="button"
+                          className="overflow-hidden rounded-2xl border border-stone-200 bg-stone-50 text-left transition hover:border-stone-300"
+                          onClick={() => {
+                            setLightboxImages(detailImages);
+                            setLightboxIndex(index);
+                            setLightboxOpen(true);
+                          }}
+                        >
+                          <img src={image.src} alt={`任务结果 ${index + 1}`} className="aspect-square w-full object-cover" />
+                        </button>
+                      ))}
+                    </div>
+                  ) : detailJob.status === "succeeded" ? (
+                    <pre className="max-h-[320px] overflow-auto rounded-2xl bg-stone-950 px-4 py-4 text-xs leading-6 text-stone-100">
+                      <code>{formatJson(detailResult)}</code>
+                    </pre>
+                  ) : (
+                    <div className="rounded-2xl border border-dashed border-stone-200 bg-stone-50 px-4 py-8 text-sm text-stone-500">
+                      当前任务还没有可展示的结果。
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="rounded-2xl border border-stone-200 bg-white px-4 py-4">
+                    <div className="text-xs text-stone-400">日志文件</div>
+                    <code className="mt-2 block break-all text-xs text-stone-700">{detailLogPath || detailJob.log_path || "—"}</code>
+                  </div>
+                  <pre className="max-h-[360px] overflow-auto rounded-2xl bg-stone-950 px-4 py-4 text-xs leading-6 text-stone-100">
+                    <code>{detailLog || "当前暂无日志内容。"}</code>
+                  </pre>
+                </div>
+              )}
             </div>
           ) : null}
         </DialogContent>
       </Dialog>
+
+      <ImageLightbox
+        images={lightboxImages}
+        currentIndex={lightboxIndex}
+        open={lightboxOpen}
+        onOpenChange={setLightboxOpen}
+        onIndexChange={setLightboxIndex}
+      />
     </>
   );
 }

@@ -314,6 +314,20 @@ class JobService:
         result = self._load_result(job_id)
         return self._public_job(job, result), result
 
+    def get_job_log(self, job_id: str, principal: AuthPrincipal) -> tuple[dict[str, object] | None, str]:
+        job = self._assert_job_access(self._load_job(job_id), principal)
+        if job is None:
+            return None, ""
+        result = self._load_result(job_id)
+        public_job = self._public_job(job, result)
+        log_path = Path(str(job.get("log_path") or ""))
+        if not log_path.is_file():
+            return public_job, ""
+        try:
+            return public_job, log_path.read_text(encoding="utf-8")
+        except OSError:
+            return public_job, ""
+
     def _execute_job(self, job: dict[str, object]) -> dict[str, object]:
         payload = dict(job.get("payload") or {})
         job_type = str(job.get("type") or "")

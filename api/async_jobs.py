@@ -8,7 +8,7 @@ from fastapi import APIRouter, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from api.support import ensure_model_access, require_client_principal
+from api.support import ensure_model_access, require_client_principal, reserve_image_quota
 from services.job_service import JobService
 
 
@@ -22,6 +22,14 @@ def _sse_line(event: str, payload: dict[str, object]) -> bytes:
     return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n".encode("utf-8")
 
 
+def _coerce_positive_int(value: object, default: int = 1) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
 def create_router(job_service: JobService) -> APIRouter:
     router = APIRouter()
 
@@ -32,6 +40,8 @@ def create_router(job_service: JobService) -> APIRouter:
         if not model:
             model = "gpt-image-2" if str(body.type).startswith("images.") else "auto"
         ensure_model_access(principal, model)
+        if str(body.type).startswith("images."):
+            principal = reserve_image_quota(principal, _coerce_positive_int(body.payload.get("n"), 1))
         job = job_service.submit_job(body.type, body.payload, principal)
         return {"job": job}
 
@@ -67,6 +77,18 @@ def create_router(job_service: JobService) -> APIRouter:
         if job.get("status") == "failed":
             raise HTTPException(status_code=409, detail={"job": job})
         raise HTTPException(status_code=202, detail={"job": job})
+
+    @router.get("/api/async/jobs/{job_id}/log")
+    async def get_job_log(job_id: str, authorization: str | None = Header(default=None)):
+        principal = require_client_principal(authorization)
+        job, log_text = job_service.get_job_log(job_id, principal)
+        if job is None:
+            raise HTTPException(status_code=404, detail={"error": "job not found"})
+        return {
+            "job": job,
+            "log_path": job.get("log_path"),
+            "log_text": log_text,
+        }
 
     @router.get("/api/async/jobs/{job_id}/events")
     async def stream_job_events(

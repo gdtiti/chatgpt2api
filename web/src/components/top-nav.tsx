@@ -2,11 +2,19 @@
 
 import Link from "next/link";
 import { Github } from "lucide-react";
+import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 
 import webConfig from "@/constants/common-env";
-import { clearStoredAuthKey } from "@/store/auth";
+import { fetchAuthSession } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import {
+  clearStoredAuthKey,
+  getStoredAuthKey,
+  getStoredAuthSession,
+  setStoredAuthSession,
+  type AuthSession,
+} from "@/store/auth";
 
 const navItems = [
   { href: "/image", label: "画图" },
@@ -19,13 +27,68 @@ const navItems = [
 export function TopNav() {
   const pathname = usePathname();
   const router = useRouter();
+  const [session, setSession] = useState<AuthSession | null>(null);
+  const [isReady, setIsReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadSession = async () => {
+      const storedSession = await getStoredAuthSession();
+      if (!cancelled) {
+        setSession(storedSession);
+      }
+      const storedKey = await getStoredAuthKey();
+      if (!storedKey) {
+        if (!cancelled) {
+          setIsReady(true);
+        }
+        return;
+      }
+      try {
+        const response = await fetchAuthSession();
+        if (cancelled) {
+          return;
+        }
+        setSession(response.session);
+        await setStoredAuthSession(response.session);
+      } catch {
+        if (cancelled) {
+          return;
+        }
+      } finally {
+        if (!cancelled) {
+          setIsReady(true);
+        }
+      }
+    };
+
+    void loadSession();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isReady || pathname === "/login") {
+      return;
+    }
+    if (session?.kind === "client" && !pathname.startsWith("/image")) {
+      router.replace("/image");
+    }
+  }, [isReady, pathname, router, session]);
 
   const handleLogout = async () => {
     await clearStoredAuthKey();
     router.replace("/login");
   };
+  const visibleNavItems = session?.kind === "client" ? navItems.filter((item) => item.href === "/image") : navItems;
 
   if (pathname === "/login") {
+    return null;
+  }
+
+  if (!isReady) {
     return null;
   }
 
@@ -51,7 +114,7 @@ export function TopNav() {
           </a>
         </div>
         <div className="flex justify-center gap-8">
-          {navItems.map((item) => {
+          {visibleNavItems.map((item) => {
             const active = pathname === item.href;
             return (
               <Link
@@ -69,6 +132,11 @@ export function TopNav() {
           })}
         </div>
         <div className="flex flex-1 items-center justify-end gap-3">
+          {session ? (
+            <span className="rounded-md bg-stone-100 px-2 py-1 text-[11px] font-medium text-stone-600">
+              {session.kind === "client" ? `测试模式 · ${session.name}` : session.name}
+            </span>
+          ) : null}
           <span className="rounded-md bg-stone-100 px-2 py-1 text-[11px] font-medium text-stone-500">
             v{webConfig.appVersion}
           </span>

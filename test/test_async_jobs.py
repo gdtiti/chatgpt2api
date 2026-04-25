@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import time
 import unittest
@@ -345,6 +346,107 @@ class AsyncJobRouteTests(unittest.TestCase):
                 self.assertIn("async_job_succeeded", task_log_text)
                 self.assertIn(job["id"], task_log_text)
                 self.assertIn(job["id"], system_log_text)
+            finally:
+                support_module.api_key_service = old_support_service
+                app_module.api_key_service = old_app_service
+                job_service.shutdown(wait=False)
+                logger.set_system_log_path(old_system_log_path)
+
+    def test_async_job_log_endpoint_returns_log_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            api_key_service = APIKeyService(Path(tmp_dir) / "api_keys.json", admin_key_provider=lambda: "chatgpt2api")
+            created = api_key_service.create_key(name="async-client")
+            client_key = created["plain_text"]
+            fake_chatgpt_service = _DelayedChatGPTService(delay=0.0)
+            old_system_log_path = logger.system_log_path
+            logger.set_system_log_path(Path(tmp_dir) / "system.log")
+            job_service = JobService(
+                Path(tmp_dir) / "jobs",
+                Path(tmp_dir) / "job_results",
+                fake_chatgpt_service,
+                task_logs_dir=Path(tmp_dir) / "task_logs",
+                max_workers=1,
+            )
+
+            old_support_service = support_module.api_key_service
+            old_app_service = app_module.api_key_service
+            try:
+                support_module.api_key_service = api_key_service
+                app_module.api_key_service = api_key_service
+                client = TestClient(create_app(chatgpt_service=fake_chatgpt_service, job_service=job_service))
+
+                submit_response = client.post(
+                    "/api/async/jobs",
+                    headers={"Authorization": f"Bearer {client_key}"},
+                    json={"type": "chat.completions", "payload": {"messages": [{"role": "user", "content": "hi"}]}},
+                )
+                self.assertEqual(submit_response.status_code, 200)
+                job_id = submit_response.json()["job"]["id"]
+
+                deadline = time.time() + 3
+                while time.time() < deadline:
+                    response = client.get(
+                        f"/api/async/jobs/{job_id}/log",
+                        headers={"Authorization": f"Bearer {client_key}"},
+                    )
+                    if response.status_code == 200 and "async_job_succeeded" in response.json()["log_text"]:
+                        break
+                    time.sleep(0.05)
+
+                self.assertEqual(response.status_code, 200)
+                payload = response.json()
+                self.assertEqual(payload["job"]["id"], job_id)
+                self.assertIn("async_job_started", payload["log_text"])
+                self.assertIn("async_job_succeeded", payload["log_text"])
+            finally:
+                support_module.api_key_service = old_support_service
+                app_module.api_key_service = old_app_service
+                job_service.shutdown(wait=False)
+                logger.set_system_log_path(old_system_log_path)
+
+    def test_async_image_job_respects_image_quota(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            api_key_service = APIKeyService(Path(tmp_dir) / "api_keys.json", admin_key_provider=lambda: "chatgpt2api")
+            created = api_key_service.create_key(
+                name="quota-client",
+                allowed_models=["gpt-image-2"],
+                max_image_count=1,
+            )
+            client_key = created["plain_text"]
+            fake_chatgpt_service = _DelayedChatGPTService(delay=0.0)
+            old_system_log_path = logger.system_log_path
+            logger.set_system_log_path(Path(tmp_dir) / "system.log")
+            job_service = JobService(
+                Path(tmp_dir) / "jobs",
+                Path(tmp_dir) / "job_results",
+                fake_chatgpt_service,
+                task_logs_dir=Path(tmp_dir) / "task_logs",
+                max_workers=1,
+            )
+
+            old_support_service = support_module.api_key_service
+            old_app_service = app_module.api_key_service
+            try:
+                support_module.api_key_service = api_key_service
+                app_module.api_key_service = api_key_service
+                client = TestClient(create_app(chatgpt_service=fake_chatgpt_service, job_service=job_service))
+
+                response = client.post(
+                    "/api/async/jobs",
+                    headers={"Authorization": f"Bearer {client_key}"},
+                    json={
+                        "type": "images.generations",
+                        "payload": {
+                            "model": "gpt-image-2",
+                            "prompt": "quota test",
+                            "n": 2,
+                        },
+                    },
+                )
+                self.assertEqual(response.status_code, 429)
+                detail = response.json()["detail"]
+                error_message = detail["error"] if isinstance(detail, dict) else json.dumps(detail, ensure_ascii=False)
+                self.assertIn("image quota exceeded", error_message)
             finally:
                 support_module.api_key_service = old_support_service
                 app_module.api_key_service = old_app_service

@@ -1,7 +1,7 @@
 import axios, {AxiosError, type AxiosRequestConfig} from "axios";
 
 import webConfig from "@/constants/common-env";
-import {clearStoredAuthKey, getStoredAuthKey} from "@/store/auth";
+import {clearStoredAuthKey, getStoredAuthKey, getStoredAuthSession} from "@/store/auth";
 
 type RequestConfig = AxiosRequestConfig & {
     redirectOnUnauthorized?: boolean;
@@ -30,10 +30,21 @@ request.interceptors.response.use(
         const status = error.response?.status;
         const shouldRedirect = (error.config as RequestConfig | undefined)?.redirectOnUnauthorized !== false;
         if (status === 401 && shouldRedirect && typeof window !== "undefined") {
+            const session = await getStoredAuthSession();
+            const pathname = window.location.pathname;
+            const isClientConsole = session?.kind === "client";
+            const adminOnlyPrefixes = ["/accounts", "/settings", "/docs"];
+            const shouldFallbackToImage =
+                isClientConsole &&
+                (adminOnlyPrefixes.some((prefix) => pathname.startsWith(prefix)) || pathname.startsWith("/jobs"));
             // Avoid redirect loop — only redirect if not already on /login
             if (!window.location.pathname.startsWith("/login")) {
-                await clearStoredAuthKey();
-                window.location.replace("/login");
+                if (shouldFallbackToImage) {
+                    window.location.replace("/image");
+                } else {
+                    await clearStoredAuthKey();
+                    window.location.replace("/login");
+                }
                 // Return a never-resolving promise to prevent further error handling
                 // while the browser navigates away
                 return new Promise(() => {});

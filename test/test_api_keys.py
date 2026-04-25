@@ -90,6 +90,111 @@ class APIKeyRouteTests(unittest.TestCase):
                 app_module.api_key_service = old_app_service
                 job_service.shutdown(wait=False)
 
+    def test_client_login_returns_session_and_limits_are_exposed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            api_key_service = APIKeyService(Path(tmp_dir) / "api_keys.json", admin_key_provider=lambda: "chatgpt2api")
+            fake_chatgpt_service = _FakeChatGPTService()
+            job_service = JobService(Path(tmp_dir) / "jobs", Path(tmp_dir) / "job_results", fake_chatgpt_service, max_workers=1)
+
+            old_support_service = support_module.api_key_service
+            old_app_service = app_module.api_key_service
+            try:
+                support_module.api_key_service = api_key_service
+                app_module.api_key_service = api_key_service
+                client = TestClient(create_app(chatgpt_service=fake_chatgpt_service, job_service=job_service))
+
+                created = client.post(
+                    "/api/admin/keys",
+                    headers={"Authorization": "Bearer chatgpt2api"},
+                    json={
+                        "name": "test-console",
+                        "allowed_models": ["gpt-image-2"],
+                        "max_requests": 8,
+                        "max_image_count": 5,
+                    },
+                )
+                self.assertEqual(created.status_code, 200)
+                plain_text = created.json()["plain_text"]
+
+                login_response = client.post(
+                    "/auth/login",
+                    headers={"Authorization": f"Bearer {plain_text}"},
+                )
+                self.assertEqual(login_response.status_code, 200)
+                session = login_response.json()["session"]
+                self.assertEqual(session["kind"], "client")
+                self.assertEqual(session["name"], "test-console")
+                self.assertEqual(session["allowed_models"], ["gpt-image-2"])
+                self.assertEqual(session["max_requests"], 8)
+                self.assertEqual(session["remaining_requests"], 8)
+                self.assertEqual(session["max_image_count"], 5)
+                self.assertEqual(session["remaining_image_count"], 5)
+
+                list_response = client.get("/api/admin/keys", headers={"Authorization": "Bearer chatgpt2api"})
+                self.assertEqual(list_response.status_code, 200)
+                item = list_response.json()["items"][0]
+                self.assertEqual(item["max_requests"], 8)
+                self.assertEqual(item["remaining_requests"], 8)
+                self.assertEqual(item["max_image_count"], 5)
+                self.assertEqual(item["remaining_image_count"], 5)
+            finally:
+                support_module.api_key_service = old_support_service
+                app_module.api_key_service = old_app_service
+                job_service.shutdown(wait=False)
+
+    def test_request_limit_and_image_quota_are_enforced(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            api_key_service = APIKeyService(Path(tmp_dir) / "api_keys.json", admin_key_provider=lambda: "chatgpt2api")
+            fake_chatgpt_service = _FakeChatGPTService()
+            job_service = JobService(Path(tmp_dir) / "jobs", Path(tmp_dir) / "job_results", fake_chatgpt_service, max_workers=1)
+
+            old_support_service = support_module.api_key_service
+            old_app_service = app_module.api_key_service
+            try:
+                support_module.api_key_service = api_key_service
+                app_module.api_key_service = api_key_service
+                client = TestClient(create_app(chatgpt_service=fake_chatgpt_service, job_service=job_service))
+
+                request_limited_key = client.post(
+                    "/api/admin/keys",
+                    headers={"Authorization": "Bearer chatgpt2api"},
+                    json={"name": "once-only", "max_requests": 1},
+                ).json()["plain_text"]
+
+                first_models = client.get("/v1/models", headers={"Authorization": f"Bearer {request_limited_key}"})
+                self.assertEqual(first_models.status_code, 200)
+                second_models = client.get("/v1/models", headers={"Authorization": f"Bearer {request_limited_key}"})
+                self.assertEqual(second_models.status_code, 429)
+                self.assertIn("request limit exceeded", second_models.text)
+
+                image_limited_key = client.post(
+                    "/api/admin/keys",
+                    headers={"Authorization": "Bearer chatgpt2api"},
+                    json={
+                        "name": "image-limited",
+                        "allowed_models": ["gpt-image-2"],
+                        "max_image_count": 1,
+                    },
+                ).json()["plain_text"]
+
+                first_image = client.post(
+                    "/v1/images/generations",
+                    headers={"Authorization": f"Bearer {image_limited_key}"},
+                    json={"model": "gpt-image-2", "prompt": "one", "n": 1},
+                )
+                self.assertEqual(first_image.status_code, 200)
+                second_image = client.post(
+                    "/v1/images/generations",
+                    headers={"Authorization": f"Bearer {image_limited_key}"},
+                    json={"model": "gpt-image-2", "prompt": "two", "n": 1},
+                )
+                self.assertEqual(second_image.status_code, 429)
+                self.assertIn("image quota exceeded", second_image.text)
+            finally:
+                support_module.api_key_service = old_support_service
+                app_module.api_key_service = old_app_service
+                job_service.shutdown(wait=False)
+
 
 if __name__ == "__main__":
     unittest.main()

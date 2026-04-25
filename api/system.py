@@ -4,7 +4,8 @@ from fastapi import APIRouter, Header, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, ConfigDict
 
-from api.support import require_auth_key
+from api.support import require_auth_key, require_session_principal
+from services.api_key_service import api_key_service
 from services.config import config
 from services.proxy_service import test_proxy
 
@@ -22,8 +23,20 @@ def create_router(app_version: str) -> APIRouter:
 
     @router.post("/auth/login")
     async def login(authorization: str | None = Header(default=None)):
-        require_auth_key(authorization)
-        return {"ok": True, "version": app_version}
+        principal = require_session_principal(authorization)
+        return {
+            "ok": True,
+            "version": app_version,
+            "session": api_key_service.session_payload(principal),
+        }
+
+    @router.get("/auth/session")
+    async def get_session(authorization: str | None = Header(default=None)):
+        principal = require_session_principal(authorization)
+        return {
+            "version": app_version,
+            "session": api_key_service.session_payload(principal),
+        }
 
     @router.get("/version")
     async def get_version():

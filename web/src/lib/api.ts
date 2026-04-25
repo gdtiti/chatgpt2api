@@ -1,7 +1,9 @@
 import webConfig from "@/constants/common-env";
-import { getStoredAuthKey } from "@/store/auth";
+import { getStoredAuthKey, type AuthSession } from "@/store/auth";
 
 import { httpRequest } from "@/lib/request";
+
+export type { AuthSession };
 
 export type AccountType = "Free" | "Plus" | "ProLite" | "Pro" | "Team";
 export type AccountStatus = "正常" | "限流" | "异常" | "禁用";
@@ -100,6 +102,11 @@ export type APIKeyItem = {
   last_used_at?: string | null;
   expires_at?: string | null;
   request_count: number;
+  max_requests?: number | null;
+  remaining_requests?: number | null;
+  image_count: number;
+  max_image_count?: number | null;
+  remaining_image_count?: number | null;
 };
 
 export type AsyncJobStatus = "queued" | "running" | "succeeded" | "failed";
@@ -138,7 +145,7 @@ export type AsyncJobSummary = {
 
 export async function login(authKey: string) {
   const normalizedAuthKey = String(authKey || "").trim();
-  return httpRequest<{ ok: boolean }>("/auth/login", {
+  return httpRequest<{ ok: boolean; version: string; session: AuthSession }>("/auth/login", {
     method: "POST",
     body: {},
     headers: {
@@ -254,6 +261,10 @@ export async function updateSettingsConfig(settings: SettingsConfig) {
   });
 }
 
+export async function fetchAuthSession() {
+  return httpRequest<{ version: string; session: AuthSession }>("/auth/session");
+}
+
 export async function listApiKeys() {
   return httpRequest<{ items: APIKeyItem[] }>("/api/admin/keys");
 }
@@ -263,6 +274,8 @@ export async function createApiKey(payload: {
   allowed_models?: string[];
   scopes?: string[];
   expires_at?: string | null;
+  max_requests?: number | null;
+  max_image_count?: number | null;
 }) {
   return httpRequest<{ item: APIKeyItem; plain_text: string }>("/api/admin/keys", {
     method: "POST",
@@ -278,6 +291,8 @@ export async function updateApiKey(
     allowed_models?: string[];
     scopes?: string[];
     expires_at?: string | null;
+    max_requests?: number | null;
+    max_image_count?: number | null;
   },
 ) {
   return httpRequest<{ item: APIKeyItem }>(`/api/admin/keys/${keyId}`, {
@@ -332,6 +347,10 @@ export async function fetchAsyncJob(jobId: string) {
 
 export async function fetchAsyncJobResult(jobId: string) {
   return httpRequest<{ job: AsyncJobItem; result: unknown }>(`/api/async/jobs/${jobId}/result`);
+}
+
+export async function fetchAsyncJobLog(jobId: string) {
+  return httpRequest<{ job: AsyncJobItem; log_path?: string | null; log_text: string }>(`/api/async/jobs/${jobId}/log`);
 }
 
 export async function createAsyncJob(payload: {

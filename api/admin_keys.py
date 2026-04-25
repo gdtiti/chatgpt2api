@@ -15,6 +15,8 @@ class APIKeyCreateRequest(BaseModel):
     allowed_models: list[str] = Field(default_factory=list)
     scopes: list[str] = Field(default_factory=lambda: ["inference"])
     expires_at: str | None = None
+    max_requests: int | None = None
+    max_image_count: int | None = None
 
 
 class APIKeyUpdateRequest(BaseModel):
@@ -23,6 +25,8 @@ class APIKeyUpdateRequest(BaseModel):
     allowed_models: list[str] | None = None
     scopes: list[str] | None = None
     expires_at: str | None = None
+    max_requests: int | None = None
+    max_image_count: int | None = None
 
 
 def create_router(api_key_service: APIKeyService) -> APIRouter:
@@ -41,19 +45,24 @@ def create_router(api_key_service: APIKeyService) -> APIRouter:
             allowed_models=body.allowed_models,
             scopes=body.scopes,
             expires_at=body.expires_at,
+            max_requests=body.max_requests,
+            max_image_count=body.max_image_count,
         )
         return created
 
     @router.post("/api/admin/keys/{key_id}")
     async def update_key(key_id: str, body: APIKeyUpdateRequest, authorization: str | None = Header(default=None)):
         require_admin_key(authorization)
+        updates = body.model_dump(mode="python")
         item = api_key_service.update_key(
             key_id,
-            name=body.name,
-            enabled=body.enabled,
-            allowed_models=body.allowed_models,
-            scopes=body.scopes,
-            expires_at=body.expires_at,
+            name=updates["name"] if "name" in body.model_fields_set else None,
+            enabled=updates["enabled"] if "enabled" in body.model_fields_set else None,
+            allowed_models=updates["allowed_models"] if "allowed_models" in body.model_fields_set else None,
+            scopes=updates["scopes"] if "scopes" in body.model_fields_set else None,
+            expires_at=updates["expires_at"] if "expires_at" in body.model_fields_set else None,
+            max_requests=updates["max_requests"] if "max_requests" in body.model_fields_set else None,
+            max_image_count=updates["max_image_count"] if "max_image_count" in body.model_fields_set else None,
         )
         if item is None:
             raise HTTPException(status_code=404, detail={"error": "api key not found"})

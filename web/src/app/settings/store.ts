@@ -66,6 +66,7 @@ function normalizeFiles(items: CPARemoteFile[]) {
 
 type SettingsStore = {
   config: SettingsConfig | null;
+  envOverrides: Record<string, string>;
   isLoadingConfig: boolean;
   isSavingConfig: boolean;
 
@@ -136,6 +137,7 @@ type SettingsStore = {
 
 export const useSettingsStore = create<SettingsStore>((set, get) => ({
   config: null,
+  envOverrides: {},
   isLoadingConfig: true,
   isSavingConfig: false,
 
@@ -170,7 +172,8 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     try {
       const data = await fetchSettingsConfig();
       set({
-        config: normalizeConfig(data.config),
+        config: normalizeConfig(data.effective_config || data.config),
+        envOverrides: data.env_overrides || {},
       });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "加载系统配置失败");
@@ -209,7 +212,8 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         data_cleanup_interval_minutes: Math.max(1, Math.min(1440, Number(config.data_cleanup_interval_minutes) || 1)),
       });
       set({
-        config: normalizeConfig(data.config),
+        config: normalizeConfig(data.effective_config || data.config),
+        envOverrides: data.env_overrides || {},
       });
       toast.success("配置已保存");
     } catch (error) {

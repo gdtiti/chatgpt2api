@@ -214,6 +214,8 @@ class ConfigLoadingTests(unittest.TestCase):
                 self.assertEqual(store.image_failure_strategy, "retry")
                 self.assertEqual(store.image_retry_count, 1)
                 self.assertEqual(store.image_parallel_attempts, 4)
+                self.assertEqual(store.get_effective()["image_failure_strategy"], "retry")
+                self.assertEqual(store.env_overrides()["image_failure_strategy"], "CHATGPT2API_IMAGE_FAILURE_STRATEGY")
                 self.assertEqual(store.image_placeholder_path, placeholder_path)
                 self.assertEqual(store.api_keys_file.name, "api_keys.json")
                 self.assertEqual(store.jobs_dir.name, "jobs")

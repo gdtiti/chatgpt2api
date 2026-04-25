@@ -80,6 +80,12 @@ export type SettingsConfig = {
   [key: string]: unknown;
 };
 
+export type SettingsResponse = {
+  config: SettingsConfig;
+  effective_config?: SettingsConfig;
+  env_overrides?: Record<string, string>;
+};
+
 export type ModelItem = {
   id: string;
   owned_by?: string;
@@ -347,11 +353,11 @@ export async function editImage(
 }
 
 export async function fetchSettingsConfig() {
-  return httpRequest<{ config: SettingsConfig }>("/api/settings");
+  return httpRequest<SettingsResponse>("/api/settings");
 }
 
 export async function updateSettingsConfig(settings: SettingsConfig) {
-  return httpRequest<{ config: SettingsConfig }>("/api/settings", {
+  return httpRequest<SettingsResponse>("/api/settings", {
     method: "POST",
     body: settings,
   });

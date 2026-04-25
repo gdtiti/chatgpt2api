@@ -44,6 +44,27 @@ ENV_SYSTEM_LOG_MAX_MB = "CHATGPT2API_SYSTEM_LOG_MAX_MB"
 ENV_DATA_CLEANUP_ENABLED = "CHATGPT2API_DATA_CLEANUP_ENABLED"
 ENV_DATA_CLEANUP_INTERVAL_MINUTES = "CHATGPT2API_DATA_CLEANUP_INTERVAL_MINUTES"
 
+ENV_OVERRIDABLE_SETTINGS = {
+    "auth-key": ENV_AUTH_KEY,
+    "refresh_account_interval_minute": ENV_REFRESH_ACCOUNT_INTERVAL_MINUTE,
+    "proxy": ENV_PROXY,
+    "base_url": ENV_BASE_URL,
+    "port": ENV_PORT,
+    "image_failure_strategy": ENV_IMAGE_FAILURE_STRATEGY,
+    "image_retry_count": ENV_IMAGE_RETRY_COUNT,
+    "image_parallel_attempts": ENV_IMAGE_PARALLEL_ATTEMPTS,
+    "image_placeholder_path": ENV_IMAGE_PLACEHOLDER_PATH,
+    "image_response_format": ENV_IMAGE_RESPONSE_FORMAT,
+    "image_thumbnail_max_size": ENV_IMAGE_THUMBNAIL_MAX_SIZE,
+    "image_thumbnail_quality": ENV_IMAGE_THUMBNAIL_QUALITY,
+    "image_wall_thumbnail_max_size": ENV_IMAGE_WALL_THUMBNAIL_MAX_SIZE,
+    "image_retention_days": ENV_IMAGE_RETENTION_DAYS,
+    "task_log_retention_days": ENV_TASK_LOG_RETENTION_DAYS,
+    "system_log_max_mb": ENV_SYSTEM_LOG_MAX_MB,
+    "data_cleanup_enabled": ENV_DATA_CLEANUP_ENABLED,
+    "data_cleanup_interval_minutes": ENV_DATA_CLEANUP_INTERVAL_MINUTES,
+}
+
 
 @dataclass(frozen=True)
 class LoadedSettings:
@@ -445,6 +466,42 @@ class ConfigStore:
 
     def get(self) -> dict[str, object]:
         return dict(self.data)
+
+    def get_effective(self) -> dict[str, object]:
+        effective = dict(self.data)
+        effective.update(
+            {
+                "auth-key": self.auth_key,
+                "port": self.listen_port,
+                "refresh_account_interval_minute": self.refresh_account_interval_minute,
+                "proxy": self.get_proxy_settings(),
+                "base_url": self.base_url,
+                "image_failure_strategy": self.image_failure_strategy,
+                "image_retry_count": self.image_retry_count,
+                "image_parallel_attempts": self.image_parallel_attempts,
+                "image_placeholder_path": str(self.image_placeholder_path or ""),
+                "image_response_format": self.image_response_format,
+                "image_thumbnail_max_size": self.image_thumbnail_max_size,
+                "image_thumbnail_quality": self.image_thumbnail_quality,
+                "image_wall_thumbnail_max_size": self.image_wall_thumbnail_max_size,
+                "image_retention_days": self.image_retention_days,
+                "task_log_retention_days": self.task_log_retention_days,
+                "system_log_max_mb": self.system_log_max_mb,
+                "data_cleanup_enabled": self.data_cleanup_enabled,
+                "data_cleanup_interval_minutes": self.data_cleanup_interval_minutes,
+            }
+        )
+        return effective
+
+    def env_overrides(self) -> dict[str, str]:
+        overrides = {
+            key: env_name
+            for key, env_name in ENV_OVERRIDABLE_SETTINGS.items()
+            if _read_env_text(env_name)
+        }
+        if "port" not in overrides and _read_env_text(ENV_PLATFORM_PORT):
+            overrides["port"] = ENV_PLATFORM_PORT
+        return overrides
 
     def get_proxy_settings(self) -> str:
         return _resolve_text_setting(self.data, "proxy", ENV_PROXY)

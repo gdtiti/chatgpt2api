@@ -20,6 +20,14 @@ class ProxyTestRequest(BaseModel):
     url: str = ""
 
 
+def _settings_response() -> dict[str, object]:
+    return {
+        "config": config.get(),
+        "effective_config": config.get_effective(),
+        "env_overrides": config.env_overrides(),
+    }
+
+
 def create_router(app_version: str) -> APIRouter:
     router = APIRouter()
 
@@ -47,12 +55,13 @@ def create_router(app_version: str) -> APIRouter:
     @router.get("/api/settings")
     async def get_settings(authorization: str | None = Header(default=None)):
         require_auth_key(authorization)
-        return {"config": config.get()}
+        return _settings_response()
 
     @router.post("/api/settings")
     async def save_settings(body: SettingsUpdateRequest, authorization: str | None = Header(default=None)):
         require_auth_key(authorization)
-        return {"config": config.update(body.model_dump(mode="python"))}
+        config.update(body.model_dump(mode="python"))
+        return _settings_response()
 
     @router.get("/api/data/stats")
     async def get_data_stats(authorization: str | None = Header(default=None)):

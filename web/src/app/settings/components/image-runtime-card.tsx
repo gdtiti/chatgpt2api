@@ -1,6 +1,6 @@
 "use client";
 
-import { ImageUp, LoaderCircle, Save } from "lucide-react";
+import { ImageUp, LoaderCircle, LockKeyhole, Save } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -20,10 +20,27 @@ const FAILURE_STRATEGIES = [
   { value: "placeholder", label: "占位图", description: "失败后返回后台配置的占位图片。" },
 ] as const;
 
+const RUNTIME_SETTING_KEYS = new Set([
+  "image_failure_strategy",
+  "image_retry_count",
+  "image_parallel_attempts",
+  "image_placeholder_path",
+  "image_response_format",
+  "image_thumbnail_max_size",
+  "image_thumbnail_quality",
+  "image_wall_thumbnail_max_size",
+  "image_retention_days",
+  "task_log_retention_days",
+  "system_log_max_mb",
+  "data_cleanup_enabled",
+  "data_cleanup_interval_minutes",
+]);
+
 export function ImageRuntimeCard() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isUploadingPlaceholder, setIsUploadingPlaceholder] = useState(false);
   const config = useSettingsStore((state) => state.config);
+  const envOverrides = useSettingsStore((state) => state.envOverrides);
   const isLoadingConfig = useSettingsStore((state) => state.isLoadingConfig);
   const isSavingConfig = useSettingsStore((state) => state.isSavingConfig);
   const loadConfig = useSettingsStore((state) => state.loadConfig);
@@ -73,6 +90,8 @@ export function ImageRuntimeCard() {
 
   const strategy = String(config?.image_failure_strategy || "fail");
   const currentStrategy = FAILURE_STRATEGIES.find((item) => item.value === strategy) || FAILURE_STRATEGIES[0];
+  const isEnvLocked = (key: string) => Boolean(envOverrides[key]);
+  const runtimeEnvOverrides = Object.entries(envOverrides).filter(([key]) => RUNTIME_SETTING_KEYS.has(key));
 
   return (
     <Card className="rounded-2xl border-white/80 bg-white/90 shadow-sm">
@@ -89,6 +108,18 @@ export function ImageRuntimeCard() {
           </Badge>
         </div>
 
+        {runtimeEnvOverrides.length > 0 && (
+          <div className="flex gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            <LockKeyhole className="mt-0.5 size-4 shrink-0" />
+            <div className="space-y-1">
+              <div className="font-medium">部分图片运行策略由环境变量接管</div>
+              <div className="text-xs leading-5 text-amber-800">
+                {runtimeEnvOverrides.map(([key, envName]) => `${key}=${envName}`).join("，")}
+              </div>
+            </div>
+          </div>
+        )}
+
         <input
           ref={fileInputRef}
           type="file"
@@ -102,7 +133,11 @@ export function ImageRuntimeCard() {
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="space-y-2">
             <label className="text-sm text-stone-700">失败策略</label>
-            <Select value={strategy} onValueChange={setImageFailureStrategy}>
+            <Select
+              value={strategy}
+              onValueChange={setImageFailureStrategy}
+              disabled={isEnvLocked("image_failure_strategy")}
+            >
               <SelectTrigger className="h-10 rounded-xl border-stone-200 bg-white">
                 <SelectValue placeholder="选择失败策略" />
               </SelectTrigger>
@@ -122,6 +157,7 @@ export function ImageRuntimeCard() {
             <Input
               value={String(config?.image_parallel_attempts || "")}
               onChange={(event) => setImageParallelAttempts(event.target.value)}
+              disabled={isEnvLocked("image_parallel_attempts")}
               placeholder="1-8"
               className="h-10 rounded-xl border-stone-200 bg-white"
             />
@@ -133,6 +169,7 @@ export function ImageRuntimeCard() {
             <Input
               value={String(config?.image_retry_count || "")}
               onChange={(event) => setImageRetryCount(event.target.value)}
+              disabled={isEnvLocked("image_retry_count")}
               placeholder="0-5"
               className="h-10 rounded-xl border-stone-200 bg-white"
             />
@@ -144,6 +181,7 @@ export function ImageRuntimeCard() {
             <Input
               value={String(config?.image_placeholder_path || "")}
               onChange={(event) => setImagePlaceholderPath(event.target.value)}
+              disabled={isEnvLocked("image_placeholder_path")}
               placeholder="data/placeholders/image-placeholder.png"
               className="h-10 rounded-xl border-stone-200 bg-white"
             />
@@ -152,7 +190,11 @@ export function ImageRuntimeCard() {
 
           <div className="space-y-2">
             <label className="text-sm text-stone-700">图片返回格式</label>
-            <Select value={String(config?.image_response_format || "b64_json")} onValueChange={setImageResponseFormat}>
+            <Select
+              value={String(config?.image_response_format || "b64_json")}
+              onValueChange={setImageResponseFormat}
+              disabled={isEnvLocked("image_response_format")}
+            >
               <SelectTrigger className="h-10 rounded-xl border-stone-200 bg-white">
                 <SelectValue placeholder="选择返回格式" />
               </SelectTrigger>
@@ -169,6 +211,7 @@ export function ImageRuntimeCard() {
             <Input
               value={String(config?.image_thumbnail_max_size ?? "")}
               onChange={(event) => setImageThumbnailMaxSize(event.target.value)}
+              disabled={isEnvLocked("image_thumbnail_max_size")}
               placeholder="512"
               className="h-10 rounded-xl border-stone-200 bg-white"
             />
@@ -180,6 +223,7 @@ export function ImageRuntimeCard() {
             <Input
               value={String(config?.image_thumbnail_quality ?? "")}
               onChange={(event) => setImageThumbnailQuality(event.target.value)}
+              disabled={isEnvLocked("image_thumbnail_quality")}
               placeholder="85"
               className="h-10 rounded-xl border-stone-200 bg-white"
             />
@@ -191,6 +235,7 @@ export function ImageRuntimeCard() {
             <Input
               value={String(config?.image_wall_thumbnail_max_size ?? "")}
               onChange={(event) => setImageWallThumbnailMaxSize(event.target.value)}
+              disabled={isEnvLocked("image_wall_thumbnail_max_size")}
               placeholder="960"
               className="h-10 rounded-xl border-stone-200 bg-white"
             />
@@ -202,6 +247,7 @@ export function ImageRuntimeCard() {
             <Input
               value={String(config?.image_retention_days ?? "")}
               onChange={(event) => setImageRetentionDays(event.target.value)}
+              disabled={isEnvLocked("image_retention_days")}
               placeholder="7"
               className="h-10 rounded-xl border-stone-200 bg-white"
             />
@@ -213,6 +259,7 @@ export function ImageRuntimeCard() {
             <Input
               value={String(config?.task_log_retention_days ?? "")}
               onChange={(event) => setTaskLogRetentionDays(event.target.value)}
+              disabled={isEnvLocked("task_log_retention_days")}
               placeholder="7"
               className="h-10 rounded-xl border-stone-200 bg-white"
             />
@@ -224,6 +271,7 @@ export function ImageRuntimeCard() {
             <Input
               value={String(config?.system_log_max_mb ?? "")}
               onChange={(event) => setSystemLogMaxMb(event.target.value)}
+              disabled={isEnvLocked("system_log_max_mb")}
               placeholder="32"
               className="h-10 rounded-xl border-stone-200 bg-white"
             />
@@ -235,6 +283,7 @@ export function ImageRuntimeCard() {
             <Input
               value={String(config?.data_cleanup_interval_minutes ?? "")}
               onChange={(event) => setDataCleanupIntervalMinutes(event.target.value)}
+              disabled={isEnvLocked("data_cleanup_interval_minutes")}
               placeholder="60"
               className="h-10 rounded-xl border-stone-200 bg-white"
             />
@@ -246,6 +295,7 @@ export function ImageRuntimeCard() {
           <Checkbox
             checked={Boolean(config?.data_cleanup_enabled)}
             onCheckedChange={(checked) => setDataCleanupEnabled(Boolean(checked))}
+            disabled={isEnvLocked("data_cleanup_enabled")}
             className="mt-0.5"
           />
           <span className="space-y-1">
@@ -268,7 +318,7 @@ export function ImageRuntimeCard() {
               type="button"
               variant="outline"
               className="h-10 rounded-xl border-stone-200 bg-white px-4 text-stone-700"
-              disabled={isUploadingPlaceholder}
+              disabled={isUploadingPlaceholder || isEnvLocked("image_placeholder_path")}
               onClick={() => fileInputRef.current?.click()}
             >
               {isUploadingPlaceholder ? (

@@ -14,8 +14,10 @@ class DataServiceTests(unittest.TestCase):
     def test_save_image_bytes_writes_thumbnail_and_markdown(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             original_data_dir = data_service_module.DATA_DIR
+            original_image_data_dir = data_service_module.IMAGE_DATA_DIR
             original_config_data = dict(data_service_module.config.data)
             data_service_module.DATA_DIR = Path(tmp_dir)
+            data_service_module.IMAGE_DATA_DIR = Path(tmp_dir) / "images"
             try:
                 with mock.patch.dict(
                         "os.environ",
@@ -44,10 +46,11 @@ class DataServiceTests(unittest.TestCase):
                         mime_type="image/png",
                     )
 
-                    original_path = data_service_module.DATA_DIR / saved["relative_path"]
-                    thumbnail_path = data_service_module.DATA_DIR / saved["thumbnail_relative_path"]
+                    original_path = data_service_module.IMAGE_DATA_DIR / saved["relative_path"]
+                    thumbnail_path = data_service_module.IMAGE_DATA_DIR / saved["thumbnail_relative_path"]
                     self.assertTrue(original_path.is_file())
                     self.assertTrue(thumbnail_path.is_file())
+                    self.assertEqual(original_path.parent.parent, data_service_module.IMAGE_DATA_DIR)
                     self.assertIn("/api/view/data/", saved["url"])
                     self.assertIn("/api/view/data/", saved["thumbnail_url"])
                     self.assertIn("/api/view/data/", saved["wall_url"])
@@ -59,13 +62,16 @@ class DataServiceTests(unittest.TestCase):
                         self.assertLessEqual(thumbnail_image.height, 512)
             finally:
                 data_service_module.DATA_DIR = original_data_dir
+                data_service_module.IMAGE_DATA_DIR = original_image_data_dir
                 data_service_module.config.data = original_config_data
 
     def test_save_image_bytes_uses_configured_thumbnail_size_and_quality(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             original_data_dir = data_service_module.DATA_DIR
+            original_image_data_dir = data_service_module.IMAGE_DATA_DIR
             original_config_data = dict(data_service_module.config.data)
             data_service_module.DATA_DIR = Path(tmp_dir)
+            data_service_module.IMAGE_DATA_DIR = Path(tmp_dir) / "images"
             try:
                 with mock.patch.dict(
                         "os.environ",
@@ -92,8 +98,8 @@ class DataServiceTests(unittest.TestCase):
                         mime_type="image/jpeg",
                     )
 
-                    thumbnail_path = data_service_module.DATA_DIR / saved["thumbnail_relative_path"]
-                    wall_path = data_service_module.DATA_DIR / saved["wall_relative_path"]
+                    thumbnail_path = data_service_module.IMAGE_DATA_DIR / saved["thumbnail_relative_path"]
+                    wall_path = data_service_module.IMAGE_DATA_DIR / saved["wall_relative_path"]
                     with Image.open(thumbnail_path) as thumbnail_image:
                         self.assertLessEqual(thumbnail_image.width, 128)
                         self.assertLessEqual(thumbnail_image.height, 128)
@@ -104,7 +110,31 @@ class DataServiceTests(unittest.TestCase):
                     self.assertEqual(data_service_module._thumbnail_save_options("JPEG"), {"quality": 73})
             finally:
                 data_service_module.DATA_DIR = original_data_dir
+                data_service_module.IMAGE_DATA_DIR = original_image_data_dir
                 data_service_module.config.data = original_config_data
+
+    def test_resolve_image_path_reads_new_storage_before_legacy_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            original_data_dir = data_service_module.DATA_DIR
+            original_image_data_dir = data_service_module.IMAGE_DATA_DIR
+            data_service_module.DATA_DIR = Path(tmp_dir)
+            data_service_module.IMAGE_DATA_DIR = Path(tmp_dir) / "images"
+            try:
+                date_segment = "2026-04-25"
+                new_path = data_service_module.IMAGE_DATA_DIR / date_segment / "job-1.png"
+                legacy_path = data_service_module.DATA_DIR / date_segment / "job-1.png"
+                new_path.parent.mkdir(parents=True)
+                legacy_path.parent.mkdir(parents=True)
+                new_path.write_bytes(b"new")
+                legacy_path.write_bytes(b"old")
+
+                self.assertEqual(data_service_module.resolve_image_path(date_segment, "job-1.png"), new_path)
+
+                new_path.unlink()
+                self.assertEqual(data_service_module.resolve_image_path(date_segment, "job-1.png"), legacy_path)
+            finally:
+                data_service_module.DATA_DIR = original_data_dir
+                data_service_module.IMAGE_DATA_DIR = original_image_data_dir
 
 
 if __name__ == "__main__":

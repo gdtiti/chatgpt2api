@@ -16,6 +16,7 @@ from PIL import Image, ImageOps
 from services.config import DATA_DIR, config
 
 _DATE_DIR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+IMAGE_DATA_DIR = DATA_DIR / "images"
 _IMAGE_SIGNATURES: list[tuple[bytes, str]] = [
     (b"\x89PNG\r\n\x1a\n", ".png"),
     (b"\xff\xd8\xff", ".jpg"),
@@ -129,6 +130,27 @@ def build_image_url(date_segment: str, file_name: str, base_url: str | None = No
     return f"{prefix}{path}" if prefix else path
 
 
+def _image_storage_dir() -> Path:
+    return IMAGE_DATA_DIR
+
+
+def _legacy_image_storage_dir() -> Path:
+    return DATA_DIR
+
+
+def _image_path(date_segment: str, file_name: str, *, legacy: bool = False) -> Path:
+    root = _legacy_image_storage_dir() if legacy else _image_storage_dir()
+    return root / date_segment / file_name
+
+
+def _is_inside(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+    except ValueError:
+        return False
+    return True
+
+
 def parse_data_image_url(value: object) -> tuple[str, str] | None:
     text = str(value or "").strip()
     if not text:
@@ -166,14 +188,19 @@ def ensure_thumbnail_for_image(
     original_file_name = requested_original or clean_name
     thumbnail_file_name = _thumbnail_file_name(original_file_name)
     wall_file_name = _wall_thumbnail_file_name(original_file_name)
-    original_path = DATA_DIR / date_segment / original_file_name
-    thumbnail_path = DATA_DIR / date_segment / thumbnail_file_name
-    wall_path = DATA_DIR / date_segment / wall_file_name
-    try:
-        original_path.resolve().relative_to(DATA_DIR.resolve())
-        thumbnail_path.resolve().relative_to(DATA_DIR.resolve())
-        wall_path.resolve().relative_to(DATA_DIR.resolve())
-    except ValueError:
+    original_path = _image_path(date_segment, original_file_name)
+    if not original_path.is_file():
+        legacy_original_path = _image_path(date_segment, original_file_name, legacy=True)
+        if legacy_original_path.is_file():
+            original_path = legacy_original_path
+    root_dir = original_path.parent.parent
+    thumbnail_path = original_path.parent / thumbnail_file_name
+    wall_path = original_path.parent / wall_file_name
+    if not (
+            _is_inside(original_path, root_dir)
+            and _is_inside(thumbnail_path, root_dir)
+            and _is_inside(wall_path, root_dir)
+    ):
         return None
     if not original_path.is_file():
         return None
@@ -235,7 +262,7 @@ def save_image_bytes(
     file_name = f"{_normalize_id(request_id)}-{max(1, int(image_index))}{extension}"
     thumbnail_file_name = _thumbnail_file_name(file_name)
     wall_file_name = _wall_thumbnail_file_name(file_name)
-    target_dir = DATA_DIR / date_segment
+    target_dir = _image_storage_dir() / date_segment
     target_dir.mkdir(parents=True, exist_ok=True)
     target_path = target_dir / file_name
     thumbnail_path = target_dir / thumbnail_file_name
@@ -275,11 +302,15 @@ def resolve_image_path(date_segment: str, file_name: str) -> Path:
     clean_name = Path(file_name).name
     if clean_name != file_name or clean_name in {"", ".", ".."}:
         raise HTTPException(status_code=404, detail={"error": "image not found"})
-    path = DATA_DIR / date_segment / clean_name
-    try:
-        path.resolve().relative_to(DATA_DIR.resolve())
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail={"error": "image not found"}) from exc
+    path = _image_path(date_segment, clean_name)
+    root_dir = _image_storage_dir()
+    if not path.is_file():
+        legacy_path = _image_path(date_segment, clean_name, legacy=True)
+        if legacy_path.is_file():
+            path = legacy_path
+            root_dir = _legacy_image_storage_dir()
+    if not _is_inside(path, root_dir):
+        raise HTTPException(status_code=404, detail={"error": "image not found"})
     if not path.is_file() and _original_file_name_for_rendition(clean_name):
         ensure_thumbnail_for_image(date_segment, clean_name)
     if not path.is_file():
@@ -299,9 +330,10 @@ class DataMaintenanceService:
     @staticmethod
     def _iter_image_files() -> list[Path]:
         items: list[Path] = []
-        if not DATA_DIR.exists():
+        image_root = _image_storage_dir()
+        if not image_root.exists():
             return items
-        for child in DATA_DIR.iterdir():
+        for child in image_root.iterdir():
             if child.is_dir() and _DATE_DIR_RE.fullmatch(child.name):
                 items.extend(path for path in child.iterdir() if path.is_file())
         return items
@@ -324,7 +356,7 @@ class DataMaintenanceService:
             "system_logs": self._directory_stats(config.system_log_file),
             "task_logs": self._directory_stats(config.task_logs_dir),
             "images": {
-                "path": str(DATA_DIR),
+                "path": str(_image_storage_dir()),
                 "files": 0,
                 "bytes": 0,
             },
@@ -383,9 +415,10 @@ class DataMaintenanceService:
     @staticmethod
     def _cleanup_empty_image_dirs() -> int:
         removed_dirs = 0
-        if not DATA_DIR.exists():
+        image_root = _image_storage_dir()
+        if not image_root.exists():
             return removed_dirs
-        for child in DATA_DIR.iterdir():
+        for child in image_root.iterdir():
             if not child.is_dir() or not _DATE_DIR_RE.fullmatch(child.name):
                 continue
             try:

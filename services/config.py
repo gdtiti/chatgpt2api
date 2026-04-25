@@ -15,6 +15,12 @@ DEFAULT_LISTEN_PORT = 80
 DEFAULT_IMAGE_FAILURE_STRATEGY = "fail"
 DEFAULT_IMAGE_RETRY_COUNT = 0
 DEFAULT_IMAGE_PARALLEL_ATTEMPTS = 1
+DEFAULT_IMAGE_RESPONSE_FORMAT = "b64_json"
+DEFAULT_IMAGE_RETENTION_DAYS = 7
+DEFAULT_TASK_LOG_RETENTION_DAYS = 7
+DEFAULT_SYSTEM_LOG_MAX_MB = 32
+DEFAULT_DATA_CLEANUP_ENABLED = False
+DEFAULT_DATA_CLEANUP_INTERVAL_MINUTES = 60
 ENV_AUTH_KEY = "CHATGPT2API_AUTH_KEY"
 ENV_REFRESH_ACCOUNT_INTERVAL_MINUTE = "CHATGPT2API_REFRESH_ACCOUNT_INTERVAL_MINUTE"
 ENV_PROXY = "CHATGPT2API_PROXY"
@@ -25,6 +31,12 @@ ENV_IMAGE_FAILURE_STRATEGY = "CHATGPT2API_IMAGE_FAILURE_STRATEGY"
 ENV_IMAGE_RETRY_COUNT = "CHATGPT2API_IMAGE_RETRY_COUNT"
 ENV_IMAGE_PARALLEL_ATTEMPTS = "CHATGPT2API_IMAGE_PARALLEL_ATTEMPTS"
 ENV_IMAGE_PLACEHOLDER_PATH = "CHATGPT2API_IMAGE_PLACEHOLDER_PATH"
+ENV_IMAGE_RESPONSE_FORMAT = "CHATGPT2API_IMAGE_RESPONSE_FORMAT"
+ENV_IMAGE_RETENTION_DAYS = "CHATGPT2API_IMAGE_RETENTION_DAYS"
+ENV_TASK_LOG_RETENTION_DAYS = "CHATGPT2API_TASK_LOG_RETENTION_DAYS"
+ENV_SYSTEM_LOG_MAX_MB = "CHATGPT2API_SYSTEM_LOG_MAX_MB"
+ENV_DATA_CLEANUP_ENABLED = "CHATGPT2API_DATA_CLEANUP_ENABLED"
+ENV_DATA_CLEANUP_INTERVAL_MINUTES = "CHATGPT2API_DATA_CLEANUP_INTERVAL_MINUTES"
 
 
 @dataclass(frozen=True)
@@ -57,6 +69,17 @@ def _resolve_text_setting(raw_config: dict[str, object], key: str, env_name: str
     return _normalize_text(raw_config.get(key))
 
 
+def _parse_bool(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    text = _normalize_text(value).lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return None
+
+
 def _parse_int(value: object) -> int | None:
     try:
         return int(value)
@@ -87,6 +110,16 @@ def _resolve_bounded_int_setting(
     if value < min_value or value > max_value:
         return default
     return value
+
+
+def _resolve_bool_setting(raw_config: dict[str, object], key: str, env_name: str, default: bool) -> bool:
+    env_value = _parse_bool(os.getenv(env_name))
+    if env_value is not None:
+        return env_value
+    file_value = _parse_bool(raw_config.get(key))
+    if file_value is not None:
+        return file_value
+    return default
 
 
 def _resolve_choice_setting(
@@ -266,6 +299,69 @@ class ConfigStore:
     @property
     def image_placeholder_path(self) -> Path | None:
         return _resolve_path_setting(self.data, "image_placeholder_path", ENV_IMAGE_PLACEHOLDER_PATH)
+
+    @property
+    def image_response_format(self) -> str:
+        return _resolve_choice_setting(
+            self.data,
+            "image_response_format",
+            ENV_IMAGE_RESPONSE_FORMAT,
+            DEFAULT_IMAGE_RESPONSE_FORMAT,
+            {"b64_json", "url"},
+        )
+
+    @property
+    def image_retention_days(self) -> int:
+        return _resolve_bounded_int_setting(
+            self.data,
+            "image_retention_days",
+            ENV_IMAGE_RETENTION_DAYS,
+            DEFAULT_IMAGE_RETENTION_DAYS,
+            min_value=0,
+            max_value=365,
+        )
+
+    @property
+    def task_log_retention_days(self) -> int:
+        return _resolve_bounded_int_setting(
+            self.data,
+            "task_log_retention_days",
+            ENV_TASK_LOG_RETENTION_DAYS,
+            DEFAULT_TASK_LOG_RETENTION_DAYS,
+            min_value=0,
+            max_value=365,
+        )
+
+    @property
+    def system_log_max_mb(self) -> int:
+        return _resolve_bounded_int_setting(
+            self.data,
+            "system_log_max_mb",
+            ENV_SYSTEM_LOG_MAX_MB,
+            DEFAULT_SYSTEM_LOG_MAX_MB,
+            min_value=1,
+            max_value=1024,
+        )
+
+    @property
+    def data_cleanup_enabled(self) -> bool:
+        return _resolve_bool_setting(
+            self.data,
+            "data_cleanup_enabled",
+            ENV_DATA_CLEANUP_ENABLED,
+            DEFAULT_DATA_CLEANUP_ENABLED,
+        )
+
+    @property
+    def data_cleanup_interval_minutes(self) -> int:
+        return _resolve_bounded_int_setting(
+            self.data,
+            "data_cleanup_interval_minutes",
+            ENV_DATA_CLEANUP_INTERVAL_MINUTES,
+            DEFAULT_DATA_CLEANUP_INTERVAL_MINUTES,
+            min_value=1,
+            max_value=1440,
+        )
 
     @property
     def api_keys_file(self) -> Path:

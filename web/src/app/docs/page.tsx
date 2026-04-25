@@ -39,6 +39,9 @@ const asyncExample = `curl http://localhost:8000/api/async/jobs \\
 const asyncSseExample = `curl -N http://localhost:8000/api/async/jobs/<job_id>/events \\
   -H "Authorization: Bearer <client-api-key>"`;
 
+const asyncResultExample = `curl http://localhost:8000/api/async/jobs/<job_id>/result \\
+  -H "Authorization: Bearer <client-api-key>"`;
+
 const imageExample = `curl http://localhost:8000/v1/images/generations \\
   -H "Authorization: Bearer <client-api-key>" \\
   -H "Content-Type: application/json" \\
@@ -47,7 +50,7 @@ const imageExample = `curl http://localhost:8000/v1/images/generations \\
     "prompt": "一张极简海报风格的山野露营插画",
     "size": "4:3",
     "n": 1,
-    "response_format": "b64_json"
+    "response_format": "url"
   }'`;
 
 const editExample = `curl http://localhost:8000/v1/images/edits \\
@@ -61,7 +64,14 @@ const envExample = `CHATGPT2API_PORT > PORT > config.json.port > 80
 CHATGPT2API_IMAGE_FAILURE_STRATEGY
 CHATGPT2API_IMAGE_RETRY_COUNT
 CHATGPT2API_IMAGE_PARALLEL_ATTEMPTS
-CHATGPT2API_IMAGE_PLACEHOLDER_PATH`;
+CHATGPT2API_IMAGE_PLACEHOLDER_PATH
+CHATGPT2API_IMAGE_RESPONSE_FORMAT
+CHATGPT2API_IMAGE_RETENTION_DAYS
+CHATGPT2API_TASK_LOG_RETENTION_DAYS
+CHATGPT2API_DATA_CLEANUP_ENABLED
+CHATGPT2API_DATA_CLEANUP_INTERVAL_MINUTES`;
+
+const imageGetExample = `curl http://localhost:8000/api/view/data/2026-04-25/<task-id>-1.png`;
 
 function CodeBlock({ value }: { value: string }) {
   return (
@@ -82,8 +92,8 @@ export default function DocsPage() {
           <Badge variant="warning">quality 当前未支持</Badge>
         </div>
         <p className="max-w-[900px] text-sm leading-7 text-stone-500">
-          页面内汇总了下游接入时最常用的鉴权方式、模型接口、异步任务接口和图片参数约束。网页画图页现已支持模型切换、同步直连、
-          异步 HTTP、异步 SSE 三种调用方式；质量 `quality` 还没有进入后端契约。
+          页面内汇总了下游接入时最常用的鉴权方式、模型接口、异步任务接口和图片返回策略。网页画图页现已固定走异步 SSE；质量
+          `quality` 当前仍未进入后端契约。
         </p>
       </div>
 
@@ -103,7 +113,8 @@ export default function DocsPage() {
             <div className="space-y-1">
               <h2 className="text-lg font-semibold tracking-tight">图片参数说明</h2>
               <p className="text-sm text-stone-500">
-                当前已支持 `size=1:1/16:9/9:16/4:3/3:4`，网页也可填写自定义尺寸文本，例如 `1024x1024` 或 `21:9`。后者会按提示透传到上游，不是严格像素契约。
+                当前已支持 `size=1:1/16:9/9:16/4:3/3:4`，网页也可填写自定义尺寸文本，例如 `1024x1024` 或 `21:9`。图片返回格式支持
+                `b64_json` 和 `url`；未配置外链地址时，`url` 会返回相对路径 `/api/view/data/...`。
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -123,7 +134,7 @@ export default function DocsPage() {
           <CardContent className="space-y-4 p-6">
             <div className="space-y-1">
               <h2 className="text-lg font-semibold tracking-tight">模型列表</h2>
-              <p className="text-sm text-stone-500">`/v1/models` 返回 OpenAI 风格模型列表，`/api/catalog/models` 会补能力说明；网页画图页会基于这里的结果切换模型。</p>
+              <p className="text-sm text-stone-500">`/v1/models` 返回 OpenAI 风格模型列表，`/api/catalog/models` 会补能力说明；网页画图页会基于这里的结果切换模型，并受 API key 模型限制约束。</p>
             </div>
             <CodeBlock value={modelsExample} />
             <CodeBlock value={catalogExample} />
@@ -135,11 +146,13 @@ export default function DocsPage() {
             <div className="space-y-1">
               <h2 className="text-lg font-semibold tracking-tight">异步任务</h2>
               <p className="text-sm text-stone-500">
-                `/api/async/jobs` 支持图片生成、图片编辑、chat.completions、responses。网页支持异步 HTTP 轮询和 SSE 订阅；SSE 订阅会持续发送 `ping` 保活。
+                `/api/async/jobs` 支持图片生成、图片编辑、chat.completions、responses。建议直接使用 SSE 订阅任务事件；SSE 通道会持续发送
+                `ping` 保活，图片页也是基于这条链路。
               </p>
             </div>
             <CodeBlock value={asyncExample} />
             <CodeBlock value={asyncSseExample} />
+            <CodeBlock value={asyncResultExample} />
           </CardContent>
         </Card>
 
@@ -148,7 +161,7 @@ export default function DocsPage() {
             <div className="space-y-1">
               <h2 className="text-lg font-semibold tracking-tight">API Key 管理接口</h2>
               <p className="text-sm text-stone-500">
-                后台可创建、停用、轮换和删除 client key。明文 key 只在创建和轮换时返回一次。
+                后台可创建、停用、轮换和删除 client key。可设置请求次数上限、图片次数上限和允许模型；明文 key 只在创建和轮换时返回一次。
               </p>
             </div>
             <CodeBlock value={adminKeysExample} />
@@ -161,7 +174,7 @@ export default function DocsPage() {
           <CardContent className="space-y-4 p-6">
             <div className="space-y-1">
               <h2 className="text-lg font-semibold tracking-tight">文生图</h2>
-              <p className="text-sm text-stone-500">兼容 `POST /v1/images/generations`，建议显式传 `size` 与 `response_format`。</p>
+              <p className="text-sm text-stone-500">兼容 `POST /v1/images/generations`，建议显式传 `size` 与 `response_format`。当服务端配置为 `url` 返回时，结果可直接展示或再次由服务端转发。</p>
             </div>
             <CodeBlock value={imageExample} />
           </CardContent>
@@ -179,6 +192,19 @@ export default function DocsPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Card className="rounded-2xl border-white/80 bg-white/90 shadow-sm">
+        <CardContent className="space-y-4 p-6">
+          <div className="space-y-1">
+            <h2 className="text-lg font-semibold tracking-tight">图片文件与清理</h2>
+            <p className="text-sm text-stone-500">
+              图片会保存到 `data/YYYY-MM-DD/task-id-index.ext`。可通过设置页配置图片保留天数、任务日志保留天数、系统日志体积和自动清理间隔。
+            </p>
+          </div>
+          <CodeBlock value={imageGetExample} />
+          <CodeBlock value={envExample} />
+        </CardContent>
+      </Card>
     </section>
   );
 }

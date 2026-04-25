@@ -88,7 +88,6 @@ export function ImageComposer({
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [draftImageModel, setDraftImageModel] = useState(imageModel);
-  const [draftRequestMode, setDraftRequestMode] = useState<ImageRequestMode>(requestMode);
   const [draftImageCount, setDraftImageCount] = useState(imageCount);
   const [draftImageSizePreset, setDraftImageSizePreset] = useState(imageSizePreset);
   const [draftCustomImageSize, setDraftCustomImageSize] = useState(customImageSize);
@@ -109,7 +108,6 @@ export function ImageComposer({
 
   const openSettings = () => {
     setDraftImageModel(imageModel);
-    setDraftRequestMode(requestMode);
     setDraftImageCount(imageCount);
     setDraftImageSizePreset(imageSizePreset);
     setDraftCustomImageSize(customImageSize);
@@ -118,7 +116,6 @@ export function ImageComposer({
 
   const applySettings = () => {
     onImageModelChange(draftImageModel);
-    onRequestModeChange(draftRequestMode);
     onImageCountChange(draftImageCount);
     onImageSizePresetChange(draftImageSizePreset);
     onCustomImageSizeChange(draftCustomImageSize);
@@ -246,7 +243,7 @@ export function ImageComposer({
 
                 <div className="flex items-end justify-between gap-3">
                   <div className="min-w-0 px-1 text-[11px] text-stone-400">
-                    当前参数: model={imageModel} / size={imageSize || "1:1"} / mode={requestMode}
+                    当前参数: model={imageModel} / size={imageSize || "1:1"} / transport={requestMode}
                   </div>
 
                   <div className="flex items-center gap-2">
@@ -279,7 +276,7 @@ export function ImageComposer({
           <DialogContent className="max-w-[720px] rounded-[28px]">
             <DialogHeader>
               <DialogTitle>会话参数设置</DialogTitle>
-              <DialogDescription>修改当前会话的模型、调用方式和图片参数，保存后立即用于后续提交。</DialogDescription>
+              <DialogDescription>修改当前会话的模型和图片参数，调用方式固定使用异步 SSE。</DialogDescription>
             </DialogHeader>
 
             <div className="grid gap-4 md:grid-cols-2">
@@ -304,16 +301,9 @@ export function ImageComposer({
 
               <div className="space-y-2">
                 <div className="text-sm font-medium text-stone-700">调用方式</div>
-                <Select value={draftRequestMode} onValueChange={(value) => setDraftRequestMode(value as ImageRequestMode)}>
-                  <SelectTrigger className="h-11 rounded-xl border-stone-200 bg-white">
-                    <SelectValue placeholder="选择方式" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="direct">直连接口</SelectItem>
-                    <SelectItem value="async_http">异步 HTTP</SelectItem>
-                    <SelectItem value="async_sse">异步 SSE</SelectItem>
-                  </SelectContent>
-                </Select>
+                <div className="flex h-11 items-center rounded-xl border border-stone-200 bg-stone-50 px-3 text-sm text-stone-700">
+                  异步 SSE
+                </div>
               </div>
 
               <div className="space-y-2">

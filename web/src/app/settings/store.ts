@@ -34,6 +34,13 @@ function normalizeConfig(config: SettingsConfig): SettingsConfig {
     image_retry_count: Number(config.image_retry_count || 0),
     image_parallel_attempts: Number(config.image_parallel_attempts || 1),
     image_placeholder_path: typeof config.image_placeholder_path === "string" ? config.image_placeholder_path : "",
+    image_response_format:
+      typeof config.image_response_format === "string" ? config.image_response_format : "b64_json",
+    image_retention_days: Number(config.image_retention_days || 7),
+    task_log_retention_days: Number(config.task_log_retention_days || 7),
+    system_log_max_mb: Number(config.system_log_max_mb || 32),
+    data_cleanup_enabled: Boolean(config.data_cleanup_enabled),
+    data_cleanup_interval_minutes: Number(config.data_cleanup_interval_minutes || 60),
   };
 }
 
@@ -93,6 +100,12 @@ type SettingsStore = {
   setImageRetryCount: (value: string) => void;
   setImageParallelAttempts: (value: string) => void;
   setImagePlaceholderPath: (value: string) => void;
+  setImageResponseFormat: (value: string) => void;
+  setImageRetentionDays: (value: string) => void;
+  setTaskLogRetentionDays: (value: string) => void;
+  setSystemLogMaxMb: (value: string) => void;
+  setDataCleanupEnabled: (value: boolean) => void;
+  setDataCleanupIntervalMinutes: (value: string) => void;
 
   loadPools: (silent?: boolean) => Promise<void>;
   openAddDialog: () => void;
@@ -179,6 +192,12 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         image_retry_count: Math.max(0, Math.min(5, Number(config.image_retry_count) || 0)),
         image_parallel_attempts: Math.max(1, Math.min(8, Number(config.image_parallel_attempts) || 1)),
         image_placeholder_path: String(config.image_placeholder_path || "").trim(),
+        image_response_format: String(config.image_response_format || "b64_json").trim() || "b64_json",
+        image_retention_days: Math.max(0, Math.min(365, Number(config.image_retention_days) || 0)),
+        task_log_retention_days: Math.max(0, Math.min(365, Number(config.task_log_retention_days) || 0)),
+        system_log_max_mb: Math.max(1, Math.min(1024, Number(config.system_log_max_mb) || 1)),
+        data_cleanup_enabled: Boolean(config.data_cleanup_enabled),
+        data_cleanup_interval_minutes: Math.max(1, Math.min(1440, Number(config.data_cleanup_interval_minutes) || 1)),
       });
       set({
         config: normalizeConfig(data.config),
@@ -312,6 +331,90 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         config: {
           ...state.config,
           image_placeholder_path: value,
+        },
+      };
+    });
+  },
+
+  setImageResponseFormat: (value) => {
+    set((state) => {
+      if (!state.config) {
+        return {};
+      }
+      return {
+        config: {
+          ...state.config,
+          image_response_format: value,
+        },
+      };
+    });
+  },
+
+  setImageRetentionDays: (value) => {
+    set((state) => {
+      if (!state.config) {
+        return {};
+      }
+      return {
+        config: {
+          ...state.config,
+          image_retention_days: value,
+        },
+      };
+    });
+  },
+
+  setTaskLogRetentionDays: (value) => {
+    set((state) => {
+      if (!state.config) {
+        return {};
+      }
+      return {
+        config: {
+          ...state.config,
+          task_log_retention_days: value,
+        },
+      };
+    });
+  },
+
+  setSystemLogMaxMb: (value) => {
+    set((state) => {
+      if (!state.config) {
+        return {};
+      }
+      return {
+        config: {
+          ...state.config,
+          system_log_max_mb: value,
+        },
+      };
+    });
+  },
+
+  setDataCleanupEnabled: (value) => {
+    set((state) => {
+      if (!state.config) {
+        return {};
+      }
+      return {
+        config: {
+          ...state.config,
+          data_cleanup_enabled: value,
+        },
+      };
+    });
+  },
+
+  setDataCleanupIntervalMinutes: (value) => {
+    set((state) => {
+      if (!state.config) {
+        return {};
+      }
+      return {
+        config: {
+          ...state.config,
+          data_cleanup_interval_minutes: value,
         },
       };
     });

@@ -9,13 +9,9 @@ import { ImageSidebar } from "@/app/image/components/image-sidebar";
 import { ImageLightbox } from "@/components/image-lightbox";
 import {
   createAsyncJob,
-  editImage,
   fetchAuthSession,
   fetchAccounts,
-  fetchAsyncJob,
-  fetchAsyncJobResult,
   fetchModelCatalog,
-  generateImage,
   streamAsyncJobEvents,
   type Account,
   type AuthSession,
@@ -106,6 +102,25 @@ function dataUrlToFile(dataUrl: string, fileName: string, mimeType?: string) {
   return new File([bytes], fileName, { type: mimeType || matchedMimeType || "image/png" });
 }
 
+function blobToDataUrl(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("读取图片失败"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function resolveImageUrlFileName(url: string, fallback: string) {
+  try {
+    const normalized = new URL(url, typeof window !== "undefined" ? window.location.origin : "http://localhost");
+    const fileName = normalized.pathname.split("/").pop() || "";
+    return fileName.trim() || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 function buildReferenceImageFromResult(image: StoredImage, fileName: string): StoredReferenceImage | null {
   if (!image.b64_json) {
     return null;
@@ -115,6 +130,20 @@ function buildReferenceImageFromResult(image: StoredImage, fileName: string): St
     name: fileName,
     type: "image/png",
     dataUrl: `data:image/png;base64,${image.b64_json}`,
+  };
+}
+
+async function buildReferenceImageFromUrl(url: string, fileName: string): Promise<StoredReferenceImage> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`加载结果图片失败 (${response.status})`);
+  }
+  const blob = await response.blob();
+  const type = blob.type || "image/png";
+  return {
+    name: resolveImageUrlFileName(url, fileName),
+    type,
+    dataUrl: await blobToDataUrl(blob),
   };
 }
 
@@ -141,37 +170,51 @@ function normalizeImageModels(items: Array<{ id?: string; image_options?: object
   return ids.length > 0 ? ids : DEFAULT_IMAGE_MODELS;
 }
 
+function normalizeStoredImageResult(item: unknown, fallbackId: string): StoredImage | null {
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+  const candidate = item as Record<string, unknown>;
+  const b64Json = typeof candidate.b64_json === "string" ? candidate.b64_json.trim() : "";
+  const url = typeof candidate.url === "string" ? candidate.url.trim() : "";
+  if (!b64Json && !url) {
+    return null;
+  }
+  return {
+    id: fallbackId,
+    status: "success",
+    ...(b64Json ? { b64_json: b64Json } : {}),
+    ...(url ? { url } : {}),
+  };
+}
+
 function buildTurnImagesFromResult(turn: ImageTurn, result: unknown): { images: StoredImage[]; failedCount: number } {
   const data =
     result && typeof result === "object" && Array.isArray((result as { data?: unknown[] }).data)
       ? (result as { data: Array<Record<string, unknown>> }).data
       : [];
 
-  const images = turn.images.map((image, index) => {
-    const item = data[index];
-    const b64Json = typeof item?.b64_json === "string" ? item.b64_json.trim() : "";
-    if (b64Json) {
-      return {
-        id: image.id,
-        status: "success" as const,
-        b64_json: b64Json,
-      };
-    }
+  const successImages = data
+    .map((item, index) => normalizeStoredImageResult(item, turn.images[index]?.id || `${turn.id}-${index}`))
+    .filter((item): item is StoredImage => item !== null);
+
+  if (successImages.length > 0) {
     return {
-      id: image.id,
-      status: "error" as const,
-      error: "未返回图片数据",
+      images: successImages,
+      failedCount: 0,
     };
-  });
+  }
+
+  const images = turn.images.map((image) => ({
+    id: image.id,
+    status: "error" as const,
+    error: "未返回图片数据",
+  }));
 
   return {
     images,
     failedCount: images.filter((item) => item.status === "error").length,
   };
-}
-
-function sleep(ms: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 async function recoverConversationHistory(items: ImageConversation[]) {
@@ -243,7 +286,7 @@ export default function ImagePage() {
   const [imagePrompt, setImagePrompt] = useState("");
   const [imageModel, setImageModel] = useState("auto");
   const [availableModels, setAvailableModels] = useState<string[]>(DEFAULT_IMAGE_MODELS);
-  const [requestMode, setRequestMode] = useState<ImageRequestMode>("direct");
+  const [requestMode, setRequestMode] = useState<ImageRequestMode>("async_sse");
   const [imageCount, setImageCount] = useState("1");
   const [imageSize, setImageSize] = useState("1:1");
   const [imageSizePreset, setImageSizePreset] = useState("1:1");
@@ -623,14 +666,24 @@ export default function ImagePage() {
     setReferenceImages((prev) => prev.filter((_, currentIndex) => currentIndex !== index));
   }, []);
 
-  const handleContinueEdit = useCallback(
-    (conversationId: string, image: StoredImage | StoredReferenceImage) => {
-      const nextReferenceImage =
-        "dataUrl" in image
-          ? image
-          : buildReferenceImageFromResult(image, `conversation-${conversationId}-${Date.now()}.png`);
+  const handleContinueEdit = useCallback(async (conversationId: string, image: StoredImage | StoredReferenceImage) => {
+    try {
+      let nextReferenceImage: StoredReferenceImage | null;
+      if ("dataUrl" in image) {
+        nextReferenceImage = image;
+      } else if (image.b64_json) {
+        nextReferenceImage = buildReferenceImageFromResult(image, `conversation-${conversationId}-${Date.now()}.png`);
+      } else if (image.url) {
+        nextReferenceImage = await buildReferenceImageFromUrl(
+          image.url,
+          `conversation-${conversationId}-${Date.now()}.png`,
+        );
+      } else {
+        nextReferenceImage = null;
+      }
+
       if (!nextReferenceImage) {
-        return;
+        throw new Error("未找到可继续编辑的图片数据");
       }
 
       setSelectedConversationId(conversationId);
@@ -643,9 +696,10 @@ export default function ImagePage() {
       setImagePrompt("");
       textareaRef.current?.focus();
       toast.success("已加入当前参考图，继续输入描述即可编辑");
-    },
-    [],
-  );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "加载结果图片失败");
+    }
+  }, []);
 
   const openLightbox = useCallback((images: ImageLightboxItem[], index: number) => {
     if (images.length === 0) {
@@ -721,208 +775,85 @@ export default function ImagePage() {
           return;
         }
 
-        if (queuedTurn.requestMode !== "direct") {
-          const asyncPayload =
-            queuedTurn.mode === "edit"
-              ? {
-                  model: turnModel,
-                  prompt: queuedTurn.prompt,
-                  n: queuedTurn.count,
-                  size: turnSize,
-                  response_format: "b64_json",
-                  images: queuedTurn.referenceImages.map((image) => image.dataUrl),
-                }
-              : {
-                  model: turnModel,
-                  prompt: queuedTurn.prompt,
-                  n: queuedTurn.count,
-                  size: turnSize,
-                  response_format: "b64_json",
-                };
-
-          const createdJob = await createAsyncJob({
-            type: queuedTurn.mode === "edit" ? "images.edits" : "images.generations",
-            payload: asyncPayload,
-          });
-
-          await updateConversation(
-            conversationId,
-            (current) => {
-              const conversation = current ?? snapshot;
-              return {
-                ...conversation,
-                updatedAt: new Date().toISOString(),
-                turns: conversation.turns.map((turn) =>
-                  turn.id === queuedTurn.id
-                    ? {
-                        ...turn,
-                        asyncJobId: createdJob.job.id,
-                      }
-                    : turn,
-                ),
+        const asyncPayload =
+          queuedTurn.mode === "edit"
+            ? {
+                model: turnModel,
+                prompt: queuedTurn.prompt,
+                n: queuedTurn.count,
+                size: turnSize,
+                images: queuedTurn.referenceImages.map((image) => image.dataUrl),
+              }
+            : {
+                model: turnModel,
+                prompt: queuedTurn.prompt,
+                n: queuedTurn.count,
+                size: turnSize,
               };
-            },
-            { persist: false },
-          );
 
-          let finalResult: unknown = null;
-          let finalError = "";
+        const createdJob = await createAsyncJob({
+          type: queuedTurn.mode === "edit" ? "images.edits" : "images.generations",
+          payload: asyncPayload,
+        });
 
-          if (queuedTurn.requestMode === "async_sse") {
-            await streamAsyncJobEvents(createdJob.job.id, {
-              onEvent: (event, payload) => {
-                if (event === "result" && payload && typeof payload === "object") {
-                  finalResult = (payload as { result?: unknown }).result;
-                }
-                if (event === "error" && payload && typeof payload === "object") {
-                  const directError = (payload as { error?: string }).error;
-                  const jobError = (payload as { job?: { error?: { message?: string } } }).job?.error?.message;
-                  finalError = String(jobError || directError || "异步任务失败");
-                }
-              },
-            });
-          } else {
-            const deadline = Date.now() + 5 * 60 * 1000;
-            while (Date.now() < deadline) {
-              const jobState = await fetchAsyncJob(createdJob.job.id);
-              if (jobState.job.status === "succeeded") {
-                finalResult = (await fetchAsyncJobResult(createdJob.job.id)).result;
-                break;
-              }
-              if (jobState.job.status === "failed") {
-                finalError = String(jobState.job.error?.message || "异步任务失败");
-                break;
-              }
-              await sleep(1500);
-            }
-            if (finalResult === null && !finalError) {
-              finalError = "等待异步任务结果超时";
-            }
-          }
-
-          if (finalResult === null) {
-            throw new Error(finalError || "异步任务失败");
-          }
-
-          await updateConversation(conversationId, (current) => {
+        await updateConversation(
+          conversationId,
+          (current) => {
             const conversation = current ?? snapshot;
             return {
               ...conversation,
               updatedAt: new Date().toISOString(),
-              turns: conversation.turns.map((turn) => {
-                if (turn.id !== queuedTurn.id) {
-                  return turn;
-                }
-                const { images, failedCount } = buildTurnImagesFromResult(turn, finalResult);
-                return {
-                  ...turn,
-                  asyncJobId: createdJob.job.id,
-                  images,
-                  status: failedCount > 0 ? "error" : "success",
-                  error: failedCount > 0 ? `其中 ${failedCount} 张未成功生成` : undefined,
-                };
-              }),
+              turns: conversation.turns.map((turn) =>
+                turn.id === queuedTurn.id
+                  ? {
+                      ...turn,
+                      asyncJobId: createdJob.job.id,
+                    }
+                  : turn,
+              ),
             };
-          });
+          },
+          { persist: false },
+        );
 
-          await loadQuota();
-          return;
-        }
+        let finalResult: unknown = null;
+        let finalError = "";
 
-        const tasks = pendingImages.map(async (pendingImage) => {
-          try {
-            const data =
-              queuedTurn.mode === "edit"
-                ? await editImage(referenceFiles, queuedTurn.prompt, { model: turnModel, size: turnSize })
-                : await generateImage(queuedTurn.prompt, { model: turnModel, size: turnSize });
-            const first = data.data?.[0];
-            if (!first?.b64_json) {
-              throw new Error("未返回图片数据");
+        await streamAsyncJobEvents(createdJob.job.id, {
+          onEvent: (event, payload) => {
+            if (event === "result" && payload && typeof payload === "object") {
+              finalResult = (payload as { result?: unknown }).result;
             }
-
-            const nextImage: StoredImage = {
-              id: pendingImage.id,
-              status: "success",
-              b64_json: first.b64_json,
-            };
-
-            await updateConversation(
-              conversationId,
-              (current) => {
-                const conversation = current ?? snapshot;
-                return {
-                  ...conversation,
-                  updatedAt: new Date().toISOString(),
-                  turns: conversation.turns.map((turn) =>
-                    turn.id === queuedTurn.id
-                      ? {
-                          ...turn,
-                          images: turn.images.map((image) => (image.id === nextImage.id ? nextImage : image)),
-                        }
-                      : turn,
-                  ),
-                };
-              },
-              { persist: false },
-            );
-
-            return nextImage;
-          } catch (error) {
-            const message = error instanceof Error ? error.message : "生成失败";
-            const failedImage: StoredImage = {
-              id: pendingImage.id,
-              status: "error",
-              error: message,
-            };
-
-            await updateConversation(
-              conversationId,
-              (current) => {
-                const conversation = current ?? snapshot;
-                return {
-                  ...conversation,
-                  updatedAt: new Date().toISOString(),
-                  turns: conversation.turns.map((turn) =>
-                    turn.id === queuedTurn.id
-                      ? {
-                          ...turn,
-                          images: turn.images.map((image) => (image.id === failedImage.id ? failedImage : image)),
-                        }
-                      : turn,
-                  ),
-                };
-              },
-              { persist: false },
-            );
-
-            throw error;
-          }
+            if (event === "error" && payload && typeof payload === "object") {
+              const directError = (payload as { error?: string }).error;
+              const jobError = (payload as { job?: { error?: { message?: string } } }).job?.error?.message;
+              finalError = String(jobError || directError || "异步任务失败");
+            }
+          },
         });
 
-        const settled = await Promise.allSettled(tasks);
-        const resumedSuccessCount = settled.filter(
-          (item): item is PromiseFulfilledResult<StoredImage> => item.status === "fulfilled",
-        ).length;
-        const resumedFailedCount = settled.length - resumedSuccessCount;
-        const existingSuccessCount = queuedTurn.images.filter((image) => image.status === "success").length;
-        const existingFailedCount = queuedTurn.images.filter((image) => image.status === "error").length;
-        const successCount = existingSuccessCount + resumedSuccessCount;
-        const failedCount = existingFailedCount + resumedFailedCount;
+        if (finalResult === null) {
+          throw new Error(finalError || "异步任务失败");
+        }
 
         await updateConversation(conversationId, (current) => {
           const conversation = current ?? snapshot;
           return {
             ...conversation,
             updatedAt: new Date().toISOString(),
-            turns: conversation.turns.map((turn) =>
-              turn.id === queuedTurn.id
-                ? {
-                    ...turn,
-                    status: failedCount > 0 ? "error" : "success",
-                    error: failedCount > 0 ? `其中 ${failedCount} 张未成功生成` : undefined,
-                  }
-                : turn,
-            ),
+            turns: conversation.turns.map((turn) => {
+              if (turn.id !== queuedTurn.id) {
+                return turn;
+              }
+              const { images, failedCount } = buildTurnImagesFromResult(turn, finalResult);
+              return {
+                ...turn,
+                asyncJobId: createdJob.job.id,
+                images,
+                status: failedCount > 0 ? "error" : "success",
+                error: failedCount > 0 ? `其中 ${failedCount} 张未成功生成` : undefined,
+              };
+            }),
           };
         });
 
@@ -1001,7 +932,7 @@ export default function ImagePage() {
       prompt,
       model: imageModel,
       mode: imageMode,
-      requestMode,
+      requestMode: "async_sse",
       size: nextSize,
       referenceImages: imageMode === "edit" ? referenceImages : [],
       count: parsedCount,

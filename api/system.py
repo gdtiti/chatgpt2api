@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Header, HTTPException
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict
 
 from api.support import require_auth_key, require_session_principal
 from services.api_key_service import api_key_service
 from services.config import config
+from services.data_service import data_maintenance_service, guess_media_type, resolve_image_path
 from services.proxy_service import test_proxy
 
 
@@ -52,6 +54,16 @@ def create_router(app_version: str) -> APIRouter:
         require_auth_key(authorization)
         return {"config": config.update(body.model_dump(mode="python"))}
 
+    @router.get("/api/data/stats")
+    async def get_data_stats(authorization: str | None = Header(default=None)):
+        require_auth_key(authorization)
+        return {"stats": await run_in_threadpool(data_maintenance_service.collect_stats)}
+
+    @router.post("/api/data/cleanup")
+    async def cleanup_data(authorization: str | None = Header(default=None)):
+        require_auth_key(authorization)
+        return {"result": await run_in_threadpool(data_maintenance_service.cleanup, force=True)}
+
     @router.post("/api/proxy/test")
     async def test_proxy_endpoint(body: ProxyTestRequest, authorization: str | None = Header(default=None)):
         require_auth_key(authorization)
@@ -59,6 +71,12 @@ def create_router(app_version: str) -> APIRouter:
         if not candidate:
             raise HTTPException(status_code=400, detail={"error": "proxy url is required"})
         return {"result": await run_in_threadpool(test_proxy, candidate)}
+
+    @router.get("/api/view/data/{date_segment}/{file_name}")
+    @router.get("/api/images/{date_segment}/{file_name}")
+    async def get_image(date_segment: str, file_name: str):
+        path = resolve_image_path(date_segment, file_name)
+        return FileResponse(path, media_type=guess_media_type(path), filename=path.name)
 
     return router
 

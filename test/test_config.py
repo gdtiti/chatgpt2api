@@ -225,6 +225,53 @@ class ConfigLoadingTests(unittest.TestCase):
                     else:
                         module.os.environ[name] = value
 
+    def test_config_store_supports_image_storage_and_cleanup_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_file = Path(tmp_dir) / "config.json"
+            config_file.write_text(
+                json.dumps(
+                    {
+                        "auth-key": "file-auth",
+                        "image_response_format": "b64_json",
+                        "image_retention_days": 7,
+                        "task_log_retention_days": 9,
+                        "system_log_max_mb": 32,
+                        "data_cleanup_enabled": False,
+                        "data_cleanup_interval_minutes": 120,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            module = self.config_module
+            env_names = {
+                "CHATGPT2API_IMAGE_RESPONSE_FORMAT": "url",
+                "CHATGPT2API_IMAGE_RETENTION_DAYS": "3",
+                "CHATGPT2API_TASK_LOG_RETENTION_DAYS": "5",
+                "CHATGPT2API_SYSTEM_LOG_MAX_MB": "64",
+                "CHATGPT2API_DATA_CLEANUP_ENABLED": "true",
+                "CHATGPT2API_DATA_CLEANUP_INTERVAL_MINUTES": "45",
+            }
+            old_env = {name: module.os.environ.get(name) for name in env_names}
+            try:
+                for name, value in env_names.items():
+                    module.os.environ[name] = value
+
+                store = module.ConfigStore(config_file)
+
+                self.assertEqual(store.image_response_format, "url")
+                self.assertEqual(store.image_retention_days, 3)
+                self.assertEqual(store.task_log_retention_days, 5)
+                self.assertEqual(store.system_log_max_mb, 64)
+                self.assertEqual(store.data_cleanup_enabled, True)
+                self.assertEqual(store.data_cleanup_interval_minutes, 45)
+            finally:
+                for name, value in old_env.items():
+                    if value is None:
+                        module.os.environ.pop(name, None)
+                    else:
+                        module.os.environ[name] = value
+
 
 if __name__ == "__main__":
     unittest.main()

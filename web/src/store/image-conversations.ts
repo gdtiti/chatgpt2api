@@ -17,6 +17,7 @@ export type StoredImage = {
   id: string;
   status?: "loading" | "success" | "error";
   b64_json?: string;
+  url?: string;
   error?: string;
 };
 
@@ -60,12 +61,20 @@ const IMAGE_CONVERSATIONS_KEY = "items";
 let imageConversationWriteQueue: Promise<void> = Promise.resolve();
 
 function normalizeStoredImage(image: StoredImage): StoredImage {
-  if (image.status === "loading" || image.status === "error" || image.status === "success") {
-    return image;
-  }
+  const b64Json = typeof image.b64_json === "string" ? image.b64_json.trim() : "";
+  const url = typeof image.url === "string" ? image.url.trim() : "";
+  const hasImage = Boolean(b64Json || url);
+  const nextStatus =
+    image.status === "loading" || image.status === "error" || image.status === "success"
+      ? image.status
+      : hasImage
+        ? "success"
+        : "loading";
   return {
     ...image,
-    status: image.b64_json ? "success" : "loading",
+    b64_json: b64Json || undefined,
+    url: url || undefined,
+    status: nextStatus,
   };
 }
 
@@ -125,10 +134,7 @@ function normalizeTurn(turn: ImageTurn & Record<string, unknown>): ImageTurn {
     prompt: String(turn.prompt || ""),
     model: (turn.model as ImageModel) || "auto",
     mode: turn.mode === "edit" ? "edit" : "generate",
-    requestMode:
-      turn.requestMode === "async_http" || turn.requestMode === "async_sse" || turn.requestMode === "direct"
-        ? turn.requestMode
-        : "direct",
+    requestMode: "async_sse",
     size: typeof turn.size === "string" && turn.size.trim() ? turn.size.trim() : "1:1",
     asyncJobId: typeof turn.asyncJobId === "string" && turn.asyncJobId.trim() ? turn.asyncJobId.trim() : undefined,
     referenceImages: getLegacyReferenceImages(turn),
@@ -155,12 +161,7 @@ function normalizeConversation(conversation: ImageConversation & Record<string, 
           prompt: String(conversation.prompt || ""),
           model: (conversation.model as ImageModel) || "auto",
           mode: conversation.mode === "edit" ? "edit" : "generate",
-          requestMode:
-            conversation.requestMode === "async_http" ||
-            conversation.requestMode === "async_sse" ||
-            conversation.requestMode === "direct"
-              ? conversation.requestMode
-              : "direct",
+          requestMode: "async_sse",
           size: typeof conversation.size === "string" && conversation.size.trim() ? conversation.size.trim() : "1:1",
           asyncJobId:
             typeof conversation.asyncJobId === "string" && conversation.asyncJobId.trim()

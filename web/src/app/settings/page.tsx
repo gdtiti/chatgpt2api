@@ -6,6 +6,7 @@ import { APIKeysCard } from "./components/api-keys-card";
 import { ConfigCard } from "./components/config-card";
 import { CPAPoolDialog } from "./components/cpa-pool-dialog";
 import { CPAPoolsCard } from "./components/cpa-pools-card";
+import { DataStorageCard } from "./components/data-storage-card";
 import { ImageRuntimeCard } from "./components/image-runtime-card";
 import { ImportBrowserDialog } from "./components/import-browser-dialog";
 import { SettingsHeader } from "./components/settings-header";
@@ -52,6 +53,7 @@ export default function SettingsPage() {
       <section className="space-y-6">
         <ConfigCard />
         <ImageRuntimeCard />
+        <DataStorageCard />
         <APIKeysCard />
         <CPAPoolsCard />
         <Sub2APIConnections />

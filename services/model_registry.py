@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from services.config import config
 from utils.helper import IMAGE_MODELS
 
 IMAGE_SIZE_OPTIONS = ["1:1", "16:9", "9:16", "4:3", "3:4"]
@@ -45,6 +46,8 @@ class ModelRegistry:
                         "size_choices": IMAGE_SIZE_OPTIONS,
                         "default_size": "1:1",
                         "response_format_choices": ["b64_json", "url"],
+                        "default_response_format": config.image_response_format,
+                        "supports_custom_size": True,
                         "supports_multiple_reference_images": True,
                     } if model_id in IMAGE_MODELS else None,
                 }

@@ -130,14 +130,14 @@ export function ConfigCard() {
             </div>
           </div>
           <div className="space-y-2">
-            <label className="text-sm text-stone-700">图片访问地址</label>
+            <label className="text-sm text-stone-700">图片外链地址</label>
             <Input
               value={String(config?.base_url || "")}
               onChange={(event) => setBaseUrl(event.target.value)}
               placeholder="https://example.com"
               className="h-10 rounded-xl border-stone-200 bg-white"
             />
-            <p className="text-xs text-stone-500">用于生成图片结果的访问前缀地址。</p>
+            <p className="text-xs text-stone-500">用于拼接图片返回 URL 的前缀；留空时接口返回相对路径 `/api/view/data/...`，由服务端转发图片文件。</p>
           </div>
         </div>
 

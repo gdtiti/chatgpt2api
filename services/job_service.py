@@ -339,10 +339,8 @@ class JobService:
             prompt = _clean_text(payload.get("prompt"))
             if not prompt:
                 raise ValueError("prompt is required")
-            response_format = _clean_text(payload.get("response_format")) or "b64_json"
+            response_format = _clean_text(payload.get("response_format")) or None
             base_url = config.base_url or None
-            if response_format == "url" and not base_url:
-                raise ValueError("base_url is required for async image url responses")
             return self.chatgpt_service.generate_with_pool(
                 prompt,
                 _clean_text(payload.get("model")) or "gpt-image-2",
@@ -350,6 +348,7 @@ class JobService:
                 _clean_text(payload.get("size")) or None,
                 response_format,
                 base_url,
+                request_id=str(job.get("id") or ""),
             )
         if job_type == "images.edits":
             prompt = _clean_text(payload.get("prompt"))
@@ -358,10 +357,8 @@ class JobService:
             images = _decode_async_image_payload(payload.get("images") or payload.get("image"))
             if not images:
                 raise ValueError("images is required")
-            response_format = _clean_text(payload.get("response_format")) or "b64_json"
+            response_format = _clean_text(payload.get("response_format")) or None
             base_url = config.base_url or None
-            if response_format == "url" and not base_url:
-                raise ValueError("base_url is required for async image url responses")
             return self.chatgpt_service.edit_with_pool(
                 prompt,
                 images,
@@ -370,6 +367,7 @@ class JobService:
                 _clean_text(payload.get("size")) or None,
                 response_format,
                 base_url,
+                request_id=str(job.get("id") or ""),
             )
         raise ValueError(f"unsupported async job type: {job_type}")
 

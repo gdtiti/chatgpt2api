@@ -13,9 +13,19 @@ export type ImageLightboxItem = {
 type ImageResultsProps = {
   selectedConversation: ImageConversation | null;
   onOpenLightbox: (images: ImageLightboxItem[], index: number) => void;
-  onContinueEdit: (conversationId: string, image: StoredImage | StoredReferenceImage) => void;
+  onContinueEdit: (conversationId: string, image: StoredImage | StoredReferenceImage) => void | Promise<void>;
   formatConversationTime: (value: string) => string;
 };
+
+function getStoredImageSrc(image: StoredImage) {
+  if (typeof image.url === "string" && image.url.trim()) {
+    return image.url.trim();
+  }
+  if (typeof image.b64_json === "string" && image.b64_json.trim()) {
+    return `data:image/png;base64,${image.b64_json}`;
+  }
+  return "";
+}
 
 export function ImageResults({
   selectedConversation,
@@ -56,9 +66,7 @@ export function ImageResults({
           src: image.dataUrl,
         }));
         const successfulTurnImages = turn.images.flatMap((image) =>
-          image.status === "success" && image.b64_json
-            ? [{ id: image.id, src: `data:image/png;base64,${image.b64_json}` }]
-            : [],
+          image.status === "success" && getStoredImageSrc(image) ? [{ id: image.id, src: getStoredImageSrc(image) }] : [],
         );
 
         return (
@@ -101,7 +109,7 @@ export function ImageResults({
                             variant="outline"
                             size="sm"
                             className="rounded-full border-stone-200 bg-white text-stone-700 hover:bg-stone-50"
-                            onClick={() => onContinueEdit(selectedConversation.id, image)}
+                            onClick={() => void onContinueEdit(selectedConversation.id, image)}
                           >
                             <Sparkles className="size-4" />
                             加入编辑
@@ -128,7 +136,8 @@ export function ImageResults({
 
                 <div className="columns-1 gap-4 space-y-4 sm:columns-2 xl:columns-3">
                   {turn.images.map((image, index) => {
-                    if (image.status === "success" && image.b64_json) {
+                    const imageSrc = getStoredImageSrc(image);
+                    if (image.status === "success" && imageSrc) {
                       const currentIndex = successfulTurnImages.findIndex((item) => item.id === image.id);
 
                       return (
@@ -142,18 +151,23 @@ export function ImageResults({
                             className="group block w-full cursor-zoom-in"
                           >
                             <img
-                              src={`data:image/png;base64,${image.b64_json}`}
+                              src={imageSrc}
                               alt={`Generated result ${index + 1}`}
                               className="block h-auto w-full transition duration-200 group-hover:brightness-90"
                             />
                           </button>
                           <div className="flex items-center justify-between gap-2 px-3 py-3">
-                            <div className="text-xs text-stone-500">结果 {index + 1}</div>
+                            <div className="flex items-center gap-2 text-xs text-stone-500">
+                              <span>结果 {index + 1}</span>
+                              {image.url ? (
+                                <span className="rounded-full bg-stone-100 px-2 py-1 text-[10px] text-stone-600">URL</span>
+                              ) : null}
+                            </div>
                             <Button
                               variant="outline"
                               size="sm"
                               className="rounded-full border-stone-200 bg-white text-stone-700 hover:bg-stone-50"
-                              onClick={() => onContinueEdit(selectedConversation.id, image)}
+                              onClick={() => void onContinueEdit(selectedConversation.id, image)}
                             >
                               <Sparkles className="size-4" />
                               加入编辑
@@ -224,11 +238,5 @@ function getTurnStatusLabel(status: ImageTurnStatus) {
 }
 
 function formatRequestMode(value: string) {
-  if (value === "async_http") {
-    return "异步 HTTP";
-  }
-  if (value === "async_sse") {
-    return "异步 SSE";
-  }
-  return "直连接口";
+  return value === "async_sse" ? "异步 SSE" : "异步 SSE";
 }

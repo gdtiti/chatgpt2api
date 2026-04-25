@@ -2,17 +2,16 @@ from __future__ import annotations
 
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import base64
-import hashlib
 import re
 import time
 import uuid
-from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator
 
 from fastapi import HTTPException
 
 from services.account_service import AccountService
 from services.config import config
+from services.data_service import save_image_bytes
 from services.openai_backend_api import CODEX_IMAGE_MODEL, OpenAIBackendAPI
 from utils.helper import (
     IMAGE_MODELS,
@@ -46,15 +45,11 @@ def is_retryable_image_error(message: str) -> bool:
     return "no downloadable image result found" in str(message or "").lower()
 
 
-def _save_image_bytes(image_data: bytes, base_url: str | None = None) -> str:
-    file_hash = hashlib.md5(image_data).hexdigest()
-    timestamp = int(time.time())
-    filename = f"{timestamp}_{file_hash}.png"
-    relative_dir = Path(time.strftime("%Y"), time.strftime("%m"), time.strftime("%d"))
-    file_path = config.images_dir / relative_dir / filename
-    file_path.parent.mkdir(parents=True, exist_ok=True)
-    file_path.write_bytes(image_data)
-    return f"{(base_url or config.base_url)}/images/{relative_dir.as_posix()}/{filename}"
+def _resolve_image_response_format(response_format: str | None) -> str:
+    value = str(response_format or "").strip()
+    if value in {"b64_json", "url"}:
+        return value
+    return config.image_response_format
 
 
 def _extract_response_images(input_value: object) -> list[tuple[bytes, str]]:
@@ -93,8 +88,10 @@ class ChatGPTService:
     @staticmethod
     def _load_placeholder_result(
             prompt: str,
-            response_format: str,
+            response_format: str | None,
             base_url: str | None = None,
+            request_id: str | None = None,
+            image_index: int = 1,
     ) -> dict[str, object]:
         placeholder_path = config.image_placeholder_path
         if placeholder_path is None:
@@ -113,6 +110,8 @@ class ChatGPTService:
             prompt,
             response_format,
             base_url,
+            request_id=request_id,
+            image_index=image_index,
         )
 
     def _call_image_generation_once(
@@ -120,8 +119,10 @@ class ChatGPTService:
             prompt: str,
             model: str,
             size: str | None,
-            response_format: str,
+            response_format: str | None,
             base_url: str | None,
+            request_id: str | None,
+            image_index: int,
     ) -> dict[str, object]:
         while True:
             try:
@@ -145,6 +146,8 @@ class ChatGPTService:
                     prompt,
                     response_format,
                     base_url,
+                    request_id=request_id,
+                    image_index=image_index,
                 )
                 account = self.account_service.mark_image_result(request_token, success=True)
                 image_items = [item for item in result.get("data") or [] if isinstance(item, dict)]
@@ -185,8 +188,10 @@ class ChatGPTService:
             images: list[tuple[bytes, str, str]],
             model: str,
             size: str | None,
-            response_format: str,
+            response_format: str | None,
             base_url: str | None,
+            request_id: str | None,
+            image_index: int,
     ) -> dict[str, object]:
         while True:
             try:
@@ -212,6 +217,8 @@ class ChatGPTService:
                     prompt,
                     response_format,
                     base_url,
+                    request_id=request_id,
+                    image_index=image_index,
                 )
                 account = self.account_service.mark_image_result(request_token, success=True)
                 image_items = [item for item in result.get("data") or [] if isinstance(item, dict)]
@@ -274,9 +281,11 @@ class ChatGPTService:
             self,
             *,
             prompt: str,
-            response_format: str,
+            response_format: str | None,
             base_url: str | None,
             operation_factory: Callable[[], dict[str, object]],
+            request_id: str | None = None,
+            image_index: int = 1,
     ) -> dict[str, object]:
         strategy = config.image_failure_strategy
         retry_count = config.image_retry_count if strategy == "retry" else 0
@@ -300,7 +309,13 @@ class ChatGPTService:
                 if strategy == "retry" and attempt_index < retry_count:
                     continue
                 if strategy == "placeholder":
-                    return self._load_placeholder_result(prompt, response_format, base_url)
+                    return self._load_placeholder_result(
+                        prompt,
+                        response_format,
+                        base_url,
+                        request_id=request_id,
+                        image_index=image_index,
+                    )
                 raise
         raise ImageGenerationError(last_error or "image generation failed")
 
@@ -650,27 +665,38 @@ class ChatGPTService:
     def _format_image_result(
             result: dict[str, object],
             prompt: str,
-            response_format: str,
+            response_format: str | None,
             base_url: str | None = None,
+            *,
+            request_id: str | None = None,
+            image_index: int = 1,
     ) -> dict[str, object]:
         created = result.get("created")
         data = result.get("data")
+        normalized_response_format = _resolve_image_response_format(response_format)
+        normalized_request_id = str(request_id or uuid.uuid4().hex).strip() or uuid.uuid4().hex
         formatted_items: list[dict[str, object]] = []
         if isinstance(data, list):
-            for item in data:
+            for item_offset, item in enumerate(data, start=0):
                 if not isinstance(item, dict):
                     continue
                 revised_prompt = str(item.get("revised_prompt") or prompt).strip() or prompt
                 b64_json = str(item.get("b64_json") or "").strip()
-                if response_format == "b64_json":
+                if normalized_response_format == "b64_json":
                     if b64_json:
                         formatted_items.append({"b64_json": b64_json, "revised_prompt": revised_prompt})
                     continue
                 if not b64_json:
                     continue
                 image_data = base64.b64decode(b64_json)
-                formatted_items.append(
-                    {"url": _save_image_bytes(image_data, base_url), "revised_prompt": revised_prompt})
+                saved = save_image_bytes(
+                    image_data,
+                    request_id=normalized_request_id,
+                    image_index=image_index + item_offset,
+                    base_url=base_url,
+                    mime_type=str(item.get("mime_type") or "").strip() or None,
+                )
+                formatted_items.append({"url": saved["url"], "revised_prompt": revised_prompt})
         return {"created": created, "data": formatted_items}
 
     @staticmethod
@@ -684,6 +710,8 @@ class ChatGPTService:
             response_format: str,
             base_url: str | None = None,
             created: int | None = None,
+            request_id: str | None = None,
+            image_index: int = 1,
     ) -> dict[str, object] | None:
         data_urls = self._extract_image_data_urls(markdown_content)
         if not data_urls:
@@ -702,6 +730,8 @@ class ChatGPTService:
             prompt,
             response_format,
             base_url,
+            request_id=request_id,
+            image_index=image_index,
         )
 
     @staticmethod
@@ -758,7 +788,15 @@ class ChatGPTService:
                 yield self._progress_chunk(model, index, total, created, content, upstream_event_type)
                 continue
 
-            formatted_result = self._stream_result_from_markdown(content, prompt, response_format, base_url, created)
+            formatted_result = self._stream_result_from_markdown(
+                content,
+                prompt,
+                response_format,
+                base_url,
+                created,
+                request_token,
+                index,
+            )
             if formatted_result:
                 yield {
                     "object": "image.generation.result",
@@ -781,43 +819,141 @@ class ChatGPTService:
                     "finish_reason": finish_reason,
                 }
 
-    def _iter_generated_images_with_pool(
+    def _run_generate_slot(
+            self,
+            prompt: str,
+            model: str,
+            size: str | None,
+            response_format: str | None,
+            base_url: str | None,
+            request_id: str | None,
+            slot_index: int,
+            total_slots: int,
+    ) -> dict[str, object]:
+        logger.info({
+            "event": "image_generate_slot_start",
+            "model": model,
+            "index": slot_index,
+            "total": total_slots,
+            "parallel_attempts": config.image_parallel_attempts,
+        })
+        return self._run_image_operation_with_strategy(
+            prompt=prompt,
+            response_format=response_format,
+            base_url=base_url,
+            request_id=request_id,
+            image_index=slot_index,
+            operation_factory=lambda: self._call_image_generation_once(
+                prompt,
+                model,
+                size,
+                response_format,
+                base_url,
+                request_id,
+                slot_index,
+            ),
+        )
+
+    def _run_edit_slot(
+            self,
+            prompt: str,
+            images: list[tuple[bytes, str, str]],
+            model: str,
+            size: str | None,
+            response_format: str | None,
+            base_url: str | None,
+            request_id: str | None,
+            slot_index: int,
+            total_slots: int,
+    ) -> dict[str, object]:
+        logger.info({
+            "event": "image_edit_slot_start",
+            "model": model,
+            "index": slot_index,
+            "total": total_slots,
+            "image_count": len(images),
+            "parallel_attempts": config.image_parallel_attempts,
+        })
+        return self._run_image_operation_with_strategy(
+            prompt=prompt,
+            response_format=response_format,
+            base_url=base_url,
+            request_id=request_id,
+            image_index=slot_index,
+            operation_factory=lambda: self._call_image_edit_once(
+                prompt,
+                images,
+                model,
+                size,
+                response_format,
+                base_url,
+                request_id,
+                slot_index,
+            ),
+        )
+
+    @staticmethod
+    def _first_completed_slot_or_raise(
+            total_slots: int,
+            operation_factory: Callable[[int], dict[str, object]],
+    ) -> dict[str, object]:
+        if total_slots <= 1:
+            return operation_factory(1)
+        errors: list[str] = []
+        executor = ThreadPoolExecutor(max_workers=total_slots, thread_name_prefix="image-fastest")
+        futures: dict[Any, int] = {}
+        try:
+            for slot_index in range(1, total_slots + 1):
+                futures[executor.submit(operation_factory, slot_index)] = slot_index
+            pending = set(futures)
+            while pending:
+                done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                for future in done:
+                    slot_index = futures[future]
+                    try:
+                        result = future.result()
+                    except Exception as exc:
+                        errors.append(str(exc))
+                        continue
+                    logger.info({
+                        "event": "image_slot_return_first_success",
+                        "slot_index": slot_index,
+                        "total_slots": total_slots,
+                    })
+                    for pending_future in pending:
+                        pending_future.cancel()
+                    return result
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+        raise ImageGenerationError(errors[-1] if errors else "image generation failed")
+
+    def generate_with_pool(
             self,
             prompt: str,
             model: str,
             n: int,
             size: str | None = None,
-            response_format: str = "b64_json",
-            base_url: str | None = None,
-    ) -> Iterator[dict[str, object]]:
-        for index in range(1, n + 1):
-            logger.info({
-                "event": "image_generate_slot_start",
-                "model": model,
-                "index": index,
-                "total": n,
-                "parallel_attempts": config.image_parallel_attempts,
-            })
-            yield self._run_image_operation_with_strategy(
-                prompt=prompt,
-                response_format=response_format,
-                base_url=base_url,
-                operation_factory=lambda: self._call_image_generation_once(prompt, model, size, response_format, base_url),
-            )
-
-    def generate_with_pool(self, prompt: str, model: str, n: int, size: str | None = None, response_format: str = "b64_json",
-                           base_url: str = None):
-        created = None
-        image_items: list[dict[str, object]] = []
-        for result in self._iter_generated_images_with_pool(prompt, model, n, size, response_format, base_url):
-            if created is None:
-                created = result.get("created")
-            data = result.get("data")
-            if isinstance(data, list):
-                image_items.extend(item for item in data if isinstance(item, dict))
+            response_format: str | None = None,
+            base_url: str = None,
+            request_id: str | None = None,
+    ):
+        total_slots = max(1, int(n or 1))
+        result = self._first_completed_slot_or_raise(
+            total_slots,
+            lambda slot_index: self._run_generate_slot(
+                prompt,
+                model,
+                size,
+                response_format,
+                base_url,
+                request_id,
+                slot_index,
+                total_slots,
+            ),
+        )
         return {
-            "created": created,
-            "data": image_items,
+            "created": result.get("created"),
+            "data": [item for item in result.get("data") or [] if isinstance(item, dict)],
         }
 
     def stream_image_generation(
@@ -826,7 +962,7 @@ class ChatGPTService:
             model: str,
             n: int,
             size: str | None = None,
-            response_format: str = "b64_json",
+            response_format: str | None = None,
             base_url: str | None = None,
     ) -> Iterator[dict[str, object]]:
         last_error = ""
@@ -912,46 +1048,31 @@ class ChatGPTService:
             model: str,
             n: int,
             size: str | None = None,
-            response_format: str = "b64_json",
+            response_format: str | None = None,
             base_url: str = None,
+            request_id: str | None = None,
     ):
-        created = None
-        image_items: list[dict[str, object]] = []
         normalized_images = list(images)
         if not normalized_images:
             raise ImageGenerationError("image is required")
-
-        for index in range(1, n + 1):
-            logger.info({
-                "event": "image_edit_slot_start",
-                "model": model,
-                "index": index,
-                "total": n,
-                "image_count": len(normalized_images),
-                "parallel_attempts": config.image_parallel_attempts,
-            })
-            result = self._run_image_operation_with_strategy(
-                prompt=prompt,
-                response_format=response_format,
-                base_url=base_url,
-                operation_factory=lambda: self._call_image_edit_once(
-                    prompt,
-                    normalized_images,
-                    model,
-                    size,
-                    response_format,
-                    base_url,
-                ),
-            )
-            if created is None:
-                created = result.get("created")
-            data = result.get("data")
-            if isinstance(data, list):
-                image_items.extend(item for item in data if isinstance(item, dict))
-
+        total_slots = max(1, int(n or 1))
+        result = self._first_completed_slot_or_raise(
+            total_slots,
+            lambda slot_index: self._run_edit_slot(
+                prompt,
+                normalized_images,
+                model,
+                size,
+                response_format,
+                base_url,
+                request_id,
+                slot_index,
+                total_slots,
+            ),
+        )
         return {
-            "created": created,
-            "data": image_items,
+            "created": result.get("created"),
+            "data": [item for item in result.get("data") or [] if isinstance(item, dict)],
         }
 
     def stream_image_edit(
@@ -961,7 +1082,7 @@ class ChatGPTService:
             model: str,
             n: int,
             size: str | None = None,
-            response_format: str = "b64_json",
+            response_format: str | None = None,
             base_url: str | None = None,
     ) -> Iterator[dict[str, object]]:
         last_error = ""

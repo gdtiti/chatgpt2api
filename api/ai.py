@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
 from fastapi import APIRouter, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
@@ -22,7 +24,7 @@ class ImageGenerationRequest(BaseModel):
     model: str = "gpt-image-2"
     n: int = Field(default=1, ge=1, le=4)
     size: str | None = None
-    response_format: str = "b64_json"
+    response_format: str | None = None
     history_disabled: bool = True
     stream: bool | None = None
 
@@ -76,6 +78,7 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
         ensure_model_access(principal, body.model)
         reserve_image_quota(principal, body.n)
         base_url = resolve_image_base_url(request)
+        request_id = uuid4().hex
         if body.stream:
             try:
                 await run_in_threadpool(account_service.get_available_access_token)
@@ -91,7 +94,14 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
             )
         try:
             return await run_in_threadpool(
-                chatgpt_service.generate_with_pool, body.prompt, body.model, body.n, body.size, body.response_format, base_url
+                chatgpt_service.generate_with_pool,
+                body.prompt,
+                body.model,
+                body.n,
+                body.size,
+                body.response_format,
+                base_url,
+                request_id,
             )
         except ImageGenerationError as exc:
             raise_image_quota_error(exc)
@@ -106,7 +116,7 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
             model: str = Form(default="gpt-image-2"),
             n: int = Form(default=1),
             size: str | None = Form(default=None),
-            response_format: str = Form(default="b64_json"),
+            response_format: str | None = Form(default=None),
             stream: bool | None = Form(default=None),
     ):
         principal = require_client_principal(authorization)
@@ -118,6 +128,7 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
         if not uploads:
             raise HTTPException(status_code=400, detail={"error": "image file is required"})
         base_url = resolve_image_base_url(request)
+        request_id = uuid4().hex
         images: list[tuple[bytes, str, str]] = []
         for upload in uploads:
             image_data = await upload.read()
@@ -133,7 +144,15 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
             )
         try:
             return await run_in_threadpool(
-                chatgpt_service.edit_with_pool, prompt, images, model, n, size, response_format, base_url
+                chatgpt_service.edit_with_pool,
+                prompt,
+                images,
+                model,
+                n,
+                size,
+                response_format,
+                base_url,
+                request_id,
             )
         except ImageGenerationError as exc:
             raise_image_quota_error(exc)

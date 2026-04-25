@@ -15,7 +15,7 @@ export type ImagePreferences = {
 
 export const DEFAULT_IMAGE_PREFERENCES: ImagePreferences = {
   imageModel: "auto",
-  requestMode: "direct",
+  requestMode: "async_sse",
   imageCount: "1",
   imageSizePreset: "1:1",
   customImageSize: "",
@@ -36,10 +36,7 @@ function normalizePreferences(value: unknown): ImagePreferences {
   const candidate = value as Record<string, unknown>;
   return {
     imageModel: String(candidate.imageModel || DEFAULT_IMAGE_PREFERENCES.imageModel).trim() || "auto",
-    requestMode:
-      candidate.requestMode === "async_http" || candidate.requestMode === "async_sse" || candidate.requestMode === "direct"
-        ? candidate.requestMode
-        : DEFAULT_IMAGE_PREFERENCES.requestMode,
+    requestMode: "async_sse",
     imageCount: String(candidate.imageCount || DEFAULT_IMAGE_PREFERENCES.imageCount).trim() || "1",
     imageSizePreset:
       String(candidate.imageSizePreset || DEFAULT_IMAGE_PREFERENCES.imageSizePreset).trim() || "1:1",

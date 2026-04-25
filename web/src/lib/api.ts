@@ -68,6 +68,12 @@ export type SettingsConfig = {
   image_retry_count?: number | string;
   image_parallel_attempts?: number | string;
   image_placeholder_path?: string;
+  image_response_format?: "b64_json" | "url" | string;
+  image_retention_days?: number | string;
+  task_log_retention_days?: number | string;
+  system_log_max_mb?: number | string;
+  data_cleanup_enabled?: boolean;
+  data_cleanup_interval_minutes?: number | string;
   [key: string]: unknown;
 };
 
@@ -86,8 +92,16 @@ export type ModelCatalogItem = {
     size_choices?: string[];
     default_size?: string;
     response_format_choices?: string[];
+    default_response_format?: string;
+    supports_custom_size?: boolean;
     supports_multiple_reference_images?: boolean;
   } | null;
+};
+
+export type ImageResultItem = {
+  b64_json?: string;
+  url?: string;
+  revised_prompt?: string;
 };
 
 export type APIKeyItem = {
@@ -141,6 +155,36 @@ export type AsyncJobSummary = {
   running: number;
   succeeded: number;
   failed: number;
+};
+
+export type DataStatsCategory = {
+  path: string;
+  files: number;
+  bytes: number;
+};
+
+export type DataStats = {
+  root: string;
+  generated_at: string;
+  total_files: number;
+  total_bytes: number;
+  categories: Record<string, DataStatsCategory>;
+};
+
+export type DataCleanupResult = {
+  enabled: boolean;
+  run_at?: string;
+  deleted: {
+    images: { files: number; bytes: number };
+    task_logs: { files: number; bytes: number };
+    empty_image_dirs: number;
+  };
+  system_log: {
+    before_bytes: number;
+    after_bytes: number;
+    trimmed_bytes: number;
+  };
+  stats: DataStats;
 };
 
 export async function login(authKey: string) {
@@ -206,7 +250,7 @@ export async function fetchModelCatalog() {
 }
 
 export async function generateImage(prompt: string, options?: { model?: ImageModel; size?: ImageSizeValue }) {
-  return httpRequest<{ created: number; data: Array<{ b64_json: string; revised_prompt?: string }> }>(
+  return httpRequest<{ created: number; data: ImageResultItem[] }>(
     "/v1/images/generations",
     {
       method: "POST",
@@ -241,7 +285,7 @@ export async function editImage(
   }
   formData.append("n", "1");
 
-  return httpRequest<{ created: number; data: Array<{ b64_json: string; revised_prompt?: string }> }>(
+  return httpRequest<{ created: number; data: ImageResultItem[] }>(
     "/v1/images/edits",
     {
       method: "POST",
@@ -258,6 +302,16 @@ export async function updateSettingsConfig(settings: SettingsConfig) {
   return httpRequest<{ config: SettingsConfig }>("/api/settings", {
     method: "POST",
     body: settings,
+  });
+}
+
+export async function fetchDataStats() {
+  return httpRequest<{ stats: DataStats }>("/api/data/stats");
+}
+
+export async function runDataCleanup() {
+  return httpRequest<{ result: DataCleanupResult }>("/api/data/cleanup", {
+    method: "POST",
   });
 }
 

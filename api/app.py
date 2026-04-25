@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from threading import Event
+from threading import Thread
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,6 +15,7 @@ from services.account_service import account_service
 from services.api_key_service import api_key_service
 from services.chatgpt_service import ChatGPTService
 from services.config import config
+from services.data_service import data_maintenance_service
 from services.job_service import JobService
 
 
@@ -35,11 +37,23 @@ def create_app(
     async def lifespan(_: FastAPI):
         stop_event = Event()
         thread = start_limited_account_watcher(stop_event)
+
+        def data_worker() -> None:
+            while not stop_event.is_set():
+                try:
+                    data_maintenance_service.run_if_due()
+                except Exception as exc:
+                    print(f"[data-cleanup-watcher] fail {exc}")
+                stop_event.wait(max(30, config.data_cleanup_interval_minutes * 60))
+
+        data_thread = Thread(target=data_worker, name="data-cleanup-watcher", daemon=True)
+        data_thread.start()
         try:
             yield
         finally:
             stop_event.set()
             thread.join(timeout=1)
+            data_thread.join(timeout=1)
             job_service.shutdown(wait=False)
 
     app = FastAPI(title="chatgpt2api", version=app_version, lifespan=lifespan)

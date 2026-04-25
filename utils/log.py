@@ -9,6 +9,8 @@ import re
 from threading import Lock
 from typing import Any
 
+from services.data_service import save_image_bytes
+
 BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = BASE_DIR / "data"
 DEFAULT_SYSTEM_LOG_FILE = DATA_DIR / "system.log"
@@ -42,6 +44,8 @@ class Logger:
         self._logger.setLevel(logging.INFO)
         self._logger.propagate = False
         self._file_lock = Lock()
+        self._image_lock = Lock()
+        self._embedded_image_index = 0
         self._system_log_path = DEFAULT_SYSTEM_LOG_FILE
 
     @property
@@ -59,10 +63,41 @@ class Logger:
             return value
         return value[:keep] + "..."
 
+    def _next_embedded_image_index(self) -> int:
+        with self._image_lock:
+            self._embedded_image_index += 1
+            return self._embedded_image_index
+
+    def _log_image_request_id(self) -> str:
+        task_log_path = _TASK_LOG_PATH.get()
+        if task_log_path is not None:
+            return f"log-{task_log_path.stem}"
+        return f"log-{datetime.now(timezone.utc).strftime('%Y%m%d')}-system"
+
+    def _store_embedded_image(self, base64_value: str, mime_type: str | None = None) -> str | None:
+        try:
+            image_bytes = base64.b64decode(base64_value, validate=True)
+        except (binascii.Error, ValueError):
+            return None
+        saved = save_image_bytes(
+            image_bytes,
+            request_id=self._log_image_request_id(),
+            image_index=self._next_embedded_image_index(),
+            mime_type=mime_type,
+        )
+        return saved["url"]
+
+    def _format_embedded_image(self, value: str, mime_type: str | None = None) -> str:
+        saved_url = self._store_embedded_image(value, mime_type)
+        if saved_url:
+            return f"[image: {saved_url}]"
+        return f"{self._mask_string(value, 24)} (base64 len={len(value)})"
+
     def _mask_base64(self, value: str) -> str:
         if value.startswith("data:") and ";base64," in value:
             header, _, data = value.partition(",")
-            return f"{header},{self._mask_string(data, 24)} (base64 len={len(data)})"
+            mime_type = header.split(";")[0].removeprefix("data:") or "image/png"
+            return self._format_embedded_image(data, mime_type)
         return f"{self._mask_string(value, 24)} (base64 len={len(value)})"
 
     def _is_base64_string(self, value: str) -> bool:
@@ -80,15 +115,15 @@ class Logger:
         stripped = value.strip()
         if stripped.startswith("data:") and ";base64," in stripped:
             return self._mask_base64(stripped)
-        if self._is_base64_string(stripped):
-            return self._mask_base64(stripped)
         sanitized = self._DATA_URL_RE.sub(lambda match: self._mask_base64(match.group(0)), value)
         sanitized = self._JSON_B64_RE.sub(
-            lambda match: f'{match.group(1)}{self._mask_base64(match.group(2))}{match.group(3)}',
+            lambda match: f'{match.group(1)}{self._format_embedded_image(match.group(2), "image/png")}{match.group(3)}',
             sanitized,
         )
         if sanitized != value:
             return sanitized
+        if self._is_base64_string(stripped):
+            return f"{self._mask_string(stripped, 24)} (base64 len={len(stripped)})"
         return value
 
     def _sanitize(self, value: Any) -> Any:
@@ -99,7 +134,7 @@ class Logger:
                 if isinstance(item, str) and ("token" in lowered_key or lowered_key == "dx"):
                     sanitized[key] = self._mask_string(item)
                 elif isinstance(item, str) and ("base64" in lowered_key or lowered_key == "b64_json"):
-                    sanitized[key] = self._mask_base64(item)
+                    sanitized[key] = self._format_embedded_image(item, "image/png")
                 else:
                     sanitized[key] = self._sanitize(item)
             return sanitized

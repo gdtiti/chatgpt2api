@@ -39,7 +39,16 @@ class _DelayedChatGPTService:
         time.sleep(self.delay)
         return {"id": "resp_async", "object": "response", "output": []}
 
-    def generate_with_pool(self, prompt: str, model: str, n: int, size: str | None = None, response_format: str = "b64_json", base_url: str | None = None):
+    def generate_with_pool(
+        self,
+        prompt: str,
+        model: str,
+        n: int,
+        size: str | None = None,
+        response_format: str | None = "b64_json",
+        base_url: str | None = None,
+        request_id: str | None = None,
+    ):
         time.sleep(self.delay)
         self.last_image_generation = {
             "prompt": prompt,
@@ -48,10 +57,21 @@ class _DelayedChatGPTService:
             "size": size,
             "response_format": response_format,
             "base_url": base_url,
+            "request_id": request_id,
         }
         return {"created": 1, "data": [{"b64_json": "ZmFrZQ==", "revised_prompt": prompt}]}
 
-    def edit_with_pool(self, prompt: str, images, model: str, n: int, size: str | None = None, response_format: str = "b64_json", base_url: str | None = None):
+    def edit_with_pool(
+        self,
+        prompt: str,
+        images,
+        model: str,
+        n: int,
+        size: str | None = None,
+        response_format: str | None = "b64_json",
+        base_url: str | None = None,
+        request_id: str | None = None,
+    ):
         time.sleep(self.delay)
         self.last_image_edit = {
             "prompt": prompt,
@@ -60,6 +80,7 @@ class _DelayedChatGPTService:
             "size": size,
             "response_format": response_format,
             "base_url": base_url,
+            "request_id": request_id,
             "image_count": len(list(images)),
         }
         return {"created": 1, "data": [{"b64_json": "ZmFrZQ==", "revised_prompt": prompt}]}
@@ -286,6 +307,7 @@ class AsyncJobRouteTests(unittest.TestCase):
                 self.assertEqual(result_response.status_code, 200)
                 self.assertIsNotNone(fake_chatgpt_service.last_image_generation)
                 self.assertEqual(fake_chatgpt_service.last_image_generation["size"], "4:3")
+                self.assertEqual(fake_chatgpt_service.last_image_generation["request_id"], job_id)
             finally:
                 support_module.api_key_service = old_support_service
                 app_module.api_key_service = old_app_service

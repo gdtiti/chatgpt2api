@@ -71,6 +71,7 @@ export type SettingsConfig = {
   image_parallel_attempts?: number | string;
   image_placeholder_path?: string;
   image_response_format?: "b64_json" | "url" | string;
+  image_url_include_b64_when_requested?: boolean;
   image_thumbnail_max_size?: number | string;
   image_thumbnail_quality?: number | string;
   image_wall_thumbnail_max_size?: number | string;

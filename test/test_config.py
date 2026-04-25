@@ -248,6 +248,7 @@ class ConfigLoadingTests(unittest.TestCase):
                     {
                         "auth-key": "file-auth",
                         "image_response_format": "b64_json",
+                        "image_url_include_b64_when_requested": False,
                         "image_thumbnail_max_size": 512,
                         "image_thumbnail_quality": 85,
                         "image_wall_thumbnail_max_size": 960,
@@ -264,6 +265,7 @@ class ConfigLoadingTests(unittest.TestCase):
             module = self.config_module
             env_names = {
                 "CHATGPT2API_IMAGE_RESPONSE_FORMAT": "url",
+                "CHATGPT2API_IMAGE_URL_INCLUDE_B64_WHEN_REQUESTED": "true",
                 "CHATGPT2API_IMAGE_THUMBNAIL_MAX_SIZE": "320",
                 "CHATGPT2API_IMAGE_THUMBNAIL_QUALITY": "72",
                 "CHATGPT2API_IMAGE_WALL_THUMBNAIL_MAX_SIZE": "1280",
@@ -281,6 +283,7 @@ class ConfigLoadingTests(unittest.TestCase):
                 store = module.ConfigStore(config_file)
 
                 self.assertEqual(store.image_response_format, "url")
+                self.assertEqual(store.image_url_include_b64_when_requested, True)
                 self.assertEqual(store.image_thumbnail_max_size, 320)
                 self.assertEqual(store.image_thumbnail_quality, 72)
                 self.assertEqual(store.image_wall_thumbnail_max_size, 1280)

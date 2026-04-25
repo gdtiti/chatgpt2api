@@ -46,10 +46,20 @@ def is_retryable_image_error(message: str) -> bool:
 
 
 def _resolve_image_response_format(response_format: str | None) -> str:
+    if config.image_response_format == "url":
+        return "url"
     value = str(response_format or "").strip()
     if value in {"b64_json", "url"}:
         return value
     return config.image_response_format
+
+
+def _should_include_b64_in_url_response(response_format: str | None) -> bool:
+    return (
+        config.image_response_format == "url"
+        and config.image_url_include_b64_when_requested
+        and str(response_format or "").strip() == "b64_json"
+    )
 
 
 def _extract_response_images(input_value: object) -> list[tuple[bytes, str]]:
@@ -718,15 +728,15 @@ class ChatGPTService:
                     base_url=base_url,
                     mime_type=str(item.get("mime_type") or "").strip() or None,
                 )
-                formatted_items.append(
-                    {
-                        "b64_json": b64_json,
-                        "url": saved["url"],
-                        "thumbnail_url": saved["thumbnail_url"],
-                        "markdown": saved["markdown"],
-                        "revised_prompt": revised_prompt,
-                    }
-                )
+                formatted_item = {
+                    "url": saved["url"],
+                    "thumbnail_url": saved["thumbnail_url"],
+                    "markdown": saved["markdown"],
+                    "revised_prompt": revised_prompt,
+                }
+                if _should_include_b64_in_url_response(response_format):
+                    formatted_item["b64_json"] = b64_json
+                formatted_items.append(formatted_item)
         return {"created": created, "data": formatted_items}
 
     @staticmethod
@@ -836,7 +846,7 @@ class ChatGPTService:
                     "total": total,
                     "data": formatted_result.get("data") if isinstance(formatted_result.get("data"), list) else [],
                 }
-                continue
+                return
 
             if finish_reason:
                 yield {

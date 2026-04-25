@@ -26,6 +26,7 @@ const RUNTIME_SETTING_KEYS = new Set([
   "image_parallel_attempts",
   "image_placeholder_path",
   "image_response_format",
+  "image_url_include_b64_when_requested",
   "image_thumbnail_max_size",
   "image_thumbnail_quality",
   "image_wall_thumbnail_max_size",
@@ -50,6 +51,7 @@ export function ImageRuntimeCard() {
   const setImageParallelAttempts = useSettingsStore((state) => state.setImageParallelAttempts);
   const setImagePlaceholderPath = useSettingsStore((state) => state.setImagePlaceholderPath);
   const setImageResponseFormat = useSettingsStore((state) => state.setImageResponseFormat);
+  const setImageUrlIncludeB64WhenRequested = useSettingsStore((state) => state.setImageUrlIncludeB64WhenRequested);
   const setImageThumbnailMaxSize = useSettingsStore((state) => state.setImageThumbnailMaxSize);
   const setImageThumbnailQuality = useSettingsStore((state) => state.setImageThumbnailQuality);
   const setImageWallThumbnailMaxSize = useSettingsStore((state) => state.setImageWallThumbnailMaxSize);
@@ -205,6 +207,21 @@ export function ImageRuntimeCard() {
             </Select>
             <p className="text-xs text-stone-500">设置为 `url` 后，图片将保存到 `/data/日期/任务ID-序号.扩展名`；未配置外链时返回 `/api/view/data/...`，配置了外链时自动拼接完整 URL。</p>
           </div>
+
+          <label className="flex items-start gap-3 rounded-2xl border border-stone-200 bg-stone-50 px-4 py-4">
+            <Checkbox
+              checked={Boolean(config?.image_url_include_b64_when_requested)}
+              onCheckedChange={(checked) => setImageUrlIncludeB64WhenRequested(Boolean(checked))}
+              disabled={isEnvLocked("image_url_include_b64_when_requested")}
+              className="mt-0.5"
+            />
+            <span className="space-y-1">
+              <span className="block text-sm font-medium text-stone-800">URL 模式兼容 b64_json</span>
+              <span className="block text-xs leading-6 text-stone-500">
+                开启后，后台返回格式为 `url` 且客户端显式请求 `response_format=b64_json` 时，会额外带上 `b64_json` 字段。
+              </span>
+            </span>
+          </label>
 
           <div className="space-y-2">
             <label className="text-sm text-stone-700">缩略图最大边长</label>

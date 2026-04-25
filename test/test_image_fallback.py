@@ -177,6 +177,64 @@ class ImageFallbackTests(unittest.TestCase):
 
         self.assertTrue(result["data"][0]["url"].startswith("/api/view/data/"))
         self.assertIn("task-123-1", result["data"][0]["url"])
+        self.assertNotIn("b64_json", result["data"][0])
+
+    def test_url_config_overrides_explicit_b64_response_format(self) -> None:
+        config.data.update(
+            {
+                "image_failure_strategy": "fail",
+                "image_parallel_attempts": 1,
+                "image_response_format": "url",
+                "image_url_include_b64_when_requested": False,
+                "base_url": "",
+            }
+        )
+        service = ChatGPTService(_FakeAccountService())
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with patch("services.data_service.DATA_DIR", Path(tmp_dir)):
+                result = service._format_image_result(
+                    {
+                        "created": 1,
+                        "data": [{"b64_json": _encode_image(b"fake-image"), "revised_prompt": "prompt"}],
+                    },
+                    "prompt",
+                    "b64_json",
+                    None,
+                    request_id="task-override",
+                    image_index=1,
+                )
+
+        self.assertTrue(result["data"][0]["url"].startswith("/api/view/data/"))
+        self.assertNotIn("b64_json", result["data"][0])
+
+    def test_url_config_can_include_b64_for_explicit_b64_request(self) -> None:
+        config.data.update(
+            {
+                "image_failure_strategy": "fail",
+                "image_parallel_attempts": 1,
+                "image_response_format": "url",
+                "image_url_include_b64_when_requested": True,
+                "base_url": "",
+            }
+        )
+        service = ChatGPTService(_FakeAccountService())
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with patch("services.data_service.DATA_DIR", Path(tmp_dir)):
+                result = service._format_image_result(
+                    {
+                        "created": 1,
+                        "data": [{"b64_json": _encode_image(b"fake-image"), "revised_prompt": "prompt"}],
+                    },
+                    "prompt",
+                    "b64_json",
+                    None,
+                    request_id="task-compat",
+                    image_index=1,
+                )
+
+        self.assertTrue(result["data"][0]["url"].startswith("/api/view/data/"))
         self.assertEqual(result["data"][0]["b64_json"], _encode_image(b"fake-image"))
 
     def test_url_response_format_prefixes_base_url_when_configured(self) -> None:
@@ -210,7 +268,45 @@ class ImageFallbackTests(unittest.TestCase):
                 result = service.generate_with_pool("prompt", "gpt-image-2", 1, response_format=None, request_id="task-456")
 
         self.assertTrue(result["data"][0]["url"].startswith("https://img.example.com/api/view/data/"))
-        self.assertEqual(result["data"][0]["b64_json"], _encode_image(b"fake-image"))
+        self.assertNotIn("b64_json", result["data"][0])
+
+    def test_stream_single_image_result_stops_after_first_image_result(self) -> None:
+        service = ChatGPTService(_FakeAccountService())
+        state = {"continued_after_result": False}
+
+        class FakeBackend:
+            def stream_image_chat_completions(self, **_kwargs):
+                yield {
+                    "created": 1,
+                    "choices": [{
+                        "delta": {"content": f"![image](data:image/png;base64,{_encode_image(b'fake-image')})"},
+                        "finish_reason": None,
+                    }],
+                }
+                state["continued_after_result"] = True
+                yield {
+                    "created": 1,
+                    "choices": [{
+                        "delta": {},
+                        "finish_reason": "stop",
+                    }],
+                }
+
+        with patch.object(ChatGPTService, "_new_backend", return_value=FakeBackend()):
+            chunks = list(
+                service._stream_single_image_result(
+                    "prompt",
+                    "gpt-image-2",
+                    1,
+                    1,
+                    "token",
+                    response_format="b64_json",
+                )
+            )
+
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(chunks[0]["object"], "image.generation.result")
+        self.assertFalse(state["continued_after_result"])
 
 
 if __name__ == "__main__":

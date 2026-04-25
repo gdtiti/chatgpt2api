@@ -38,6 +38,7 @@ function normalizeConfig(config: SettingsConfig): SettingsConfig {
     image_placeholder_path: typeof config.image_placeholder_path === "string" ? config.image_placeholder_path : "",
     image_response_format:
       typeof config.image_response_format === "string" ? config.image_response_format : "b64_json",
+    image_url_include_b64_when_requested: Boolean(config.image_url_include_b64_when_requested),
     image_thumbnail_max_size: Number(config.image_thumbnail_max_size || 512),
     image_thumbnail_quality: Number(config.image_thumbnail_quality || 85),
     image_wall_thumbnail_max_size: Number(config.image_wall_thumbnail_max_size || 960),
@@ -109,6 +110,7 @@ type SettingsStore = {
   setImageParallelAttempts: (value: string) => void;
   setImagePlaceholderPath: (value: string) => void;
   setImageResponseFormat: (value: string) => void;
+  setImageUrlIncludeB64WhenRequested: (value: boolean) => void;
   setImageThumbnailMaxSize: (value: string) => void;
   setImageThumbnailQuality: (value: string) => void;
   setImageWallThumbnailMaxSize: (value: string) => void;
@@ -208,6 +210,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         image_parallel_attempts: Math.max(1, Math.min(8, Number(config.image_parallel_attempts) || 1)),
         image_placeholder_path: String(config.image_placeholder_path || "").trim(),
         image_response_format: String(config.image_response_format || "b64_json").trim() || "b64_json",
+        image_url_include_b64_when_requested: Boolean(config.image_url_include_b64_when_requested),
         image_thumbnail_max_size: Math.max(64, Math.min(2048, Number(config.image_thumbnail_max_size) || 512)),
         image_thumbnail_quality: Math.max(1, Math.min(100, Number(config.image_thumbnail_quality) || 85)),
         image_wall_thumbnail_max_size: Math.max(128, Math.min(4096, Number(config.image_wall_thumbnail_max_size) || 960)),
@@ -392,6 +395,20 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         config: {
           ...state.config,
           image_response_format: value,
+        },
+      };
+    });
+  },
+
+  setImageUrlIncludeB64WhenRequested: (value) => {
+    set((state) => {
+      if (!state.config) {
+        return {};
+      }
+      return {
+        config: {
+          ...state.config,
+          image_url_include_b64_when_requested: value,
         },
       };
     });

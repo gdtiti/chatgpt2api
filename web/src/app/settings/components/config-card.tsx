@@ -21,6 +21,8 @@ export function ConfigCard() {
   const setRefreshAccountIntervalMinute = useSettingsStore((state) => state.setRefreshAccountIntervalMinute);
   const setProxy = useSettingsStore((state) => state.setProxy);
   const setBaseUrl = useSettingsStore((state) => state.setBaseUrl);
+  const setImageUrlPrefix = useSettingsStore((state) => state.setImageUrlPrefix);
+  const setImageUrlTemplate = useSettingsStore((state) => state.setImageUrlTemplate);
   const setPort = useSettingsStore((state) => state.setPort);
   const saveConfig = useSettingsStore((state) => state.saveConfig);
 
@@ -130,14 +132,34 @@ export function ConfigCard() {
             </div>
           </div>
           <div className="space-y-2">
-            <label className="text-sm text-stone-700">图片外链地址</label>
+            <label className="text-sm text-stone-700">图片主机地址</label>
             <Input
               value={String(config?.base_url || "")}
               onChange={(event) => setBaseUrl(event.target.value)}
               placeholder="https://example.com"
               className="h-10 rounded-xl border-stone-200 bg-white"
             />
-            <p className="text-xs text-stone-500">用于拼接图片返回 URL 的前缀；留空时接口返回相对路径 `/api/view/data/...`，由服务端转发图片文件。</p>
+            <p className="text-xs text-stone-500">只替换主机，路径仍为 `/api/view/data/YYYY-MM-DD/file`。</p>
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm text-stone-700">图片 URL 前缀</label>
+            <Input
+              value={String(config?.image_url_prefix || "")}
+              onChange={(event) => setImageUrlPrefix(event.target.value)}
+              placeholder="https://hf-mirror.com/buckets/name/resolve"
+              className="h-10 rounded-xl border-stone-200 bg-white"
+            />
+            <p className="text-xs text-stone-500">替代 `/api/view/data/`，最终拼接为 `前缀/YYYY-MM-DD/file`。</p>
+          </div>
+          <div className="space-y-2 md:col-span-2">
+            <label className="text-sm text-stone-700">图片 URL 模板</label>
+            <Input
+              value={String(config?.image_url_template || "")}
+              onChange={(event) => setImageUrlTemplate(event.target.value)}
+              placeholder="https://hf-mirror.com/buckets/name/resolve/{date}/{file}"
+              className="h-10 rounded-xl border-stone-200 bg-white"
+            />
+            <p className="text-xs text-stone-500">最高优先级，支持 `{date}`、`{file}`、`{path}`。</p>
           </div>
         </div>
 

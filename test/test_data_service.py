@@ -136,6 +136,48 @@ class DataServiceTests(unittest.TestCase):
                 data_service_module.DATA_DIR = original_data_dir
                 data_service_module.IMAGE_DATA_DIR = original_image_data_dir
 
+    def test_build_image_url_supports_template_prefix_base_url_and_relative_fallback(self) -> None:
+        original_config_data = dict(data_service_module.config.data)
+        try:
+            with mock.patch.dict(
+                    "os.environ",
+                    {
+                        "CHATGPT2API_BASE_URL": "",
+                        "CHATGPT2API_IMAGE_URL_PREFIX": "",
+                        "CHATGPT2API_IMAGE_URL_TEMPLATE": "",
+                    },
+            ):
+                data_service_module.config.data = {
+                    **data_service_module.config.data,
+                    "base_url": "",
+                    "image_url_prefix": "",
+                    "image_url_template": "",
+                }
+                self.assertEqual(
+                    data_service_module.build_image_url("2026-04-25", "job-1.png"),
+                    "/api/view/data/2026-04-25/job-1.png",
+                )
+
+                data_service_module.config.data["base_url"] = "https://api.example.com/"
+                self.assertEqual(
+                    data_service_module.build_image_url("2026-04-25", "job-1.png"),
+                    "https://api.example.com/api/view/data/2026-04-25/job-1.png",
+                )
+
+                data_service_module.config.data["image_url_prefix"] = "https://cdn.example.com/resolve/"
+                self.assertEqual(
+                    data_service_module.build_image_url("2026-04-25", "job-1.png"),
+                    "https://cdn.example.com/resolve/2026-04-25/job-1.png",
+                )
+
+                data_service_module.config.data["image_url_template"] = "https://cdn.example.com/files/{path}"
+                self.assertEqual(
+                    data_service_module.build_image_url("2026-04-25", "job-1.png"),
+                    "https://cdn.example.com/files/2026-04-25/job-1.png",
+                )
+        finally:
+            data_service_module.config.data = original_config_data
+
 
 if __name__ == "__main__":
     unittest.main()

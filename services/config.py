@@ -35,6 +35,8 @@ ENV_IMAGE_RETRY_COUNT = "CHATGPT2API_IMAGE_RETRY_COUNT"
 ENV_IMAGE_PARALLEL_ATTEMPTS = "CHATGPT2API_IMAGE_PARALLEL_ATTEMPTS"
 ENV_IMAGE_PLACEHOLDER_PATH = "CHATGPT2API_IMAGE_PLACEHOLDER_PATH"
 ENV_IMAGE_RESPONSE_FORMAT = "CHATGPT2API_IMAGE_RESPONSE_FORMAT"
+ENV_IMAGE_URL_PREFIX = "CHATGPT2API_IMAGE_URL_PREFIX"
+ENV_IMAGE_URL_TEMPLATE = "CHATGPT2API_IMAGE_URL_TEMPLATE"
 ENV_IMAGE_THUMBNAIL_MAX_SIZE = "CHATGPT2API_IMAGE_THUMBNAIL_MAX_SIZE"
 ENV_IMAGE_THUMBNAIL_QUALITY = "CHATGPT2API_IMAGE_THUMBNAIL_QUALITY"
 ENV_IMAGE_WALL_THUMBNAIL_MAX_SIZE = "CHATGPT2API_IMAGE_WALL_THUMBNAIL_MAX_SIZE"
@@ -55,6 +57,8 @@ ENV_OVERRIDABLE_SETTINGS = {
     "image_parallel_attempts": ENV_IMAGE_PARALLEL_ATTEMPTS,
     "image_placeholder_path": ENV_IMAGE_PLACEHOLDER_PATH,
     "image_response_format": ENV_IMAGE_RESPONSE_FORMAT,
+    "image_url_prefix": ENV_IMAGE_URL_PREFIX,
+    "image_url_template": ENV_IMAGE_URL_TEMPLATE,
     "image_thumbnail_max_size": ENV_IMAGE_THUMBNAIL_MAX_SIZE,
     "image_thumbnail_quality": ENV_IMAGE_THUMBNAIL_QUALITY,
     "image_wall_thumbnail_max_size": ENV_IMAGE_WALL_THUMBNAIL_MAX_SIZE,
@@ -294,6 +298,14 @@ class ConfigStore:
         return _resolve_text_setting(self.data, "base_url", ENV_BASE_URL).rstrip("/")
 
     @property
+    def image_url_prefix(self) -> str:
+        return _resolve_text_setting(self.data, "image_url_prefix", ENV_IMAGE_URL_PREFIX).rstrip("/")
+
+    @property
+    def image_url_template(self) -> str:
+        return _resolve_text_setting(self.data, "image_url_template", ENV_IMAGE_URL_TEMPLATE)
+
+    @property
     def listen_port(self) -> int:
         return _resolve_port_setting(self.data)
 
@@ -476,6 +488,8 @@ class ConfigStore:
                 "refresh_account_interval_minute": self.refresh_account_interval_minute,
                 "proxy": self.get_proxy_settings(),
                 "base_url": self.base_url,
+                "image_url_prefix": self.image_url_prefix,
+                "image_url_template": self.image_url_template,
                 "image_failure_strategy": self.image_failure_strategy,
                 "image_retry_count": self.image_retry_count,
                 "image_parallel_attempts": self.image_parallel_attempts,

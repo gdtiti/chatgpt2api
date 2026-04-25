@@ -61,6 +61,8 @@ type AccountUpdateResponse = {
 export type SettingsConfig = {
   proxy: string;
   base_url?: string;
+  image_url_prefix?: string;
+  image_url_template?: string;
   "auth-key"?: string;
   port?: number | string;
   refresh_account_interval_minute?: number | string;

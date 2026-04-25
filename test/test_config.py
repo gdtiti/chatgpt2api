@@ -70,6 +70,8 @@ class ConfigLoadingTests(unittest.TestCase):
                         "refresh_account_interval_minute": 60,
                         "proxy": "http://file-proxy:8080",
                         "base_url": "https://file.example.com/",
+                        "image_url_prefix": "https://file-images.example.com/resolve/",
+                        "image_url_template": "https://file-images.example.com/{date}/{file}",
                     }
                 ),
                 encoding="utf-8",
@@ -82,6 +84,8 @@ class ConfigLoadingTests(unittest.TestCase):
                 "CHATGPT2API_REFRESH_ACCOUNT_INTERVAL_MINUTE": "15",
                 "CHATGPT2API_PROXY": "http://env-proxy:9090",
                 "CHATGPT2API_BASE_URL": "https://env.example.com/",
+                "CHATGPT2API_IMAGE_URL_PREFIX": "https://env-images.example.com/resolve/",
+                "CHATGPT2API_IMAGE_URL_TEMPLATE": "https://env-images.example.com/{path}",
             }
             old_env = {name: module.os.environ.get(name) for name in env_names}
             try:
@@ -95,6 +99,9 @@ class ConfigLoadingTests(unittest.TestCase):
                 self.assertEqual(store.refresh_account_interval_minute, 15)
                 self.assertEqual(store.get_proxy_settings(), "http://env-proxy:9090")
                 self.assertEqual(store.base_url, "https://env.example.com")
+                self.assertEqual(store.image_url_prefix, "https://env-images.example.com/resolve")
+                self.assertEqual(store.image_url_template, "https://env-images.example.com/{path}")
+                self.assertEqual(store.get_effective()["image_url_prefix"], "https://env-images.example.com/resolve")
             finally:
                 for name, value in old_env.items():
                     if value is None:
@@ -113,6 +120,8 @@ class ConfigLoadingTests(unittest.TestCase):
                         "refresh_account_interval_minute": 60,
                         "proxy": "http://file-proxy:8080",
                         "base_url": "https://file.example.com/",
+                        "image_url_prefix": "https://file-images.example.com/resolve/",
+                        "image_url_template": "https://file-images.example.com/{date}/{file}",
                     }
                 ),
                 encoding="utf-8",
@@ -126,6 +135,8 @@ class ConfigLoadingTests(unittest.TestCase):
                 "CHATGPT2API_REFRESH_ACCOUNT_INTERVAL_MINUTE": "invalid",
                 "CHATGPT2API_PROXY": " ",
                 "CHATGPT2API_BASE_URL": "",
+                "CHATGPT2API_IMAGE_URL_PREFIX": "",
+                "CHATGPT2API_IMAGE_URL_TEMPLATE": " ",
             }
             old_env = {name: module.os.environ.get(name) for name in env_names}
             try:
@@ -139,6 +150,8 @@ class ConfigLoadingTests(unittest.TestCase):
                 self.assertEqual(store.refresh_account_interval_minute, 60)
                 self.assertEqual(store.get_proxy_settings(), "http://file-proxy:8080")
                 self.assertEqual(store.base_url, "https://file.example.com")
+                self.assertEqual(store.image_url_prefix, "https://file-images.example.com/resolve")
+                self.assertEqual(store.image_url_template, "https://file-images.example.com/{date}/{file}")
             finally:
                 for name, value in old_env.items():
                     if value is None:

@@ -29,6 +29,8 @@ function normalizeConfig(config: SettingsConfig): SettingsConfig {
     refresh_account_interval_minute: Number(config.refresh_account_interval_minute || 5),
     proxy: typeof config.proxy === "string" ? config.proxy : "",
     base_url: typeof config.base_url === "string" ? config.base_url : "",
+    image_url_prefix: typeof config.image_url_prefix === "string" ? config.image_url_prefix : "",
+    image_url_template: typeof config.image_url_template === "string" ? config.image_url_template : "",
     image_failure_strategy:
       typeof config.image_failure_strategy === "string" ? config.image_failure_strategy : "fail",
     image_retry_count: Number(config.image_retry_count || 0),
@@ -99,6 +101,8 @@ type SettingsStore = {
   setRefreshAccountIntervalMinute: (value: string) => void;
   setProxy: (value: string) => void;
   setBaseUrl: (value: string) => void;
+  setImageUrlPrefix: (value: string) => void;
+  setImageUrlTemplate: (value: string) => void;
   setPort: (value: string) => void;
   setImageFailureStrategy: (value: string) => void;
   setImageRetryCount: (value: string) => void;
@@ -197,6 +201,8 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         refresh_account_interval_minute: Math.max(1, Number(config.refresh_account_interval_minute) || 1),
         proxy: config.proxy.trim(),
         base_url: String(config.base_url || "").trim(),
+        image_url_prefix: String(config.image_url_prefix || "").trim(),
+        image_url_template: String(config.image_url_template || "").trim(),
         image_failure_strategy: String(config.image_failure_strategy || "fail").trim() || "fail",
         image_retry_count: Math.max(0, Math.min(5, Number(config.image_retry_count) || 0)),
         image_parallel_attempts: Math.max(1, Math.min(8, Number(config.image_parallel_attempts) || 1)),
@@ -288,6 +294,34 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         config: {
           ...state.config,
           base_url: value,
+        },
+      };
+    });
+  },
+
+  setImageUrlPrefix: (value) => {
+    set((state) => {
+      if (!state.config) {
+        return {};
+      }
+      return {
+        config: {
+          ...state.config,
+          image_url_prefix: value,
+        },
+      };
+    });
+  },
+
+  setImageUrlTemplate: (value) => {
+    set((state) => {
+      if (!state.config) {
+        return {};
+      }
+      return {
+        config: {
+          ...state.config,
+          image_url_template: value,
         },
       };
     });

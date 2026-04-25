@@ -125,6 +125,18 @@ def _guess_extension(image_data: bytes, mime_type: str | None = None) -> str:
 
 
 def build_image_url(date_segment: str, file_name: str, base_url: str | None = None) -> str:
+    template = str(config.image_url_template or "").strip()
+    if template:
+        relative_path = f"{date_segment}/{file_name}"
+        return (
+            template
+            .replace("{date}", date_segment)
+            .replace("{file}", file_name)
+            .replace("{path}", relative_path)
+        )
+    custom_prefix = str(config.image_url_prefix or "").strip().rstrip("/")
+    if custom_prefix:
+        return f"{custom_prefix}/{date_segment}/{file_name}"
     path = f"/api/view/data/{date_segment}/{file_name}"
     prefix = str(base_url or config.base_url or "").strip().rstrip("/")
     return f"{prefix}{path}" if prefix else path
@@ -164,6 +176,22 @@ def parse_data_image_url(value: object) -> tuple[str, str] | None:
         return None
     tail = path.split(marker, 1)[1].strip("/")
     parts = tail.split("/", 1)
+    if len(parts) != 2:
+        return None
+    date_segment, file_name = parts
+    if not _DATE_DIR_RE.fullmatch(date_segment):
+        return None
+    clean_name = Path(file_name).name
+    if clean_name != file_name or clean_name in {"", ".", ".."}:
+        return None
+    return date_segment, clean_name
+
+
+def parse_relative_image_path(value: object) -> tuple[str, str] | None:
+    text = str(value or "").strip().strip("/")
+    if not text:
+        return None
+    parts = text.split("/", 1)
     if len(parts) != 2:
         return None
     date_segment, file_name = parts
@@ -232,6 +260,8 @@ def ensure_preview_image_metadata(item: dict[str, Any], *, base_url: str | None 
         parse_data_image_url(next_item.get("url"))
         or parse_data_image_url(next_item.get("thumbnail_url"))
         or parse_data_image_url(next_item.get("src"))
+        or parse_relative_image_path(next_item.get("relative_path"))
+        or parse_relative_image_path(next_item.get("thumbnail_relative_path"))
     )
     if parsed is None:
         return next_item

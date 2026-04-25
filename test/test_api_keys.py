@@ -29,10 +29,29 @@ class _FakeChatGPTService:
     def create_response(self, payload: dict[str, object]) -> dict[str, object]:
         return {"id": "resp_test", "object": "response", "output": []}
 
-    def generate_with_pool(self, prompt: str, model: str, n: int, size: str | None = None, response_format: str = "b64_json", base_url: str | None = None):
+    def generate_with_pool(
+        self,
+        prompt: str,
+        model: str,
+        n: int,
+        size: str | None = None,
+        response_format: str = "b64_json",
+        base_url: str | None = None,
+        request_id: str | None = None,
+    ):
         return {"created": 1, "data": [{"b64_json": "ZmFrZQ==", "revised_prompt": prompt}]}
 
-    def edit_with_pool(self, prompt: str, images, model: str, n: int, size: str | None = None, response_format: str = "b64_json", base_url: str | None = None):
+    def edit_with_pool(
+        self,
+        prompt: str,
+        images,
+        model: str,
+        n: int,
+        size: str | None = None,
+        response_format: str = "b64_json",
+        base_url: str | None = None,
+        request_id: str | None = None,
+    ):
         return {"created": 1, "data": [{"b64_json": "ZmFrZQ==", "revised_prompt": prompt}]}
 
 

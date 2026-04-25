@@ -8,6 +8,20 @@ from services.metadata_db import MetadataDatabase
 
 
 class MetadataDatabaseTests(unittest.TestCase):
+    def test_corrupt_database_is_quarantined_and_recreated(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "metadata.sqlite3"
+            db_path.write_bytes(b"not a sqlite database")
+
+            database = MetadataDatabase(db_path)
+            database.record_task_log("job-1", "/tmp/job-1.log")
+
+            quarantined = list(Path(tmp_dir).glob("metadata.sqlite3.corrupt-*"))
+            self.assertEqual(len(quarantined), 1)
+            jobs, total = database.list_async_jobs(is_admin=True, api_key_id="admin")
+            self.assertEqual(total, 0)
+            self.assertEqual(jobs, [])
+
     def test_gallery_and_waterfall_are_queryable_and_stateful(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             database = MetadataDatabase(Path(tmp_dir) / "metadata.sqlite3")

@@ -3,12 +3,15 @@ from __future__ import annotations
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import json
+import logging
 from pathlib import Path
 import sqlite3
-from threading import Lock
+from threading import RLock
 from typing import Any
 
 from services.config import DATA_DIR
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _utc_now() -> str:
@@ -18,19 +21,85 @@ def _utc_now() -> str:
 class MetadataDatabase:
     def __init__(self, path: Path | None = None) -> None:
         self.path = path or (DATA_DIR / "metadata.sqlite3")
-        self._lock = Lock()
+        self._lock = RLock()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
 
     @contextmanager
     def _connect(self):
-        connection = sqlite3.connect(self.path)
+        connection = self._open_connection()
         connection.row_factory = sqlite3.Row
         try:
+            try:
+                self._verify_connection(connection)
+            except sqlite3.DatabaseError as exc:
+                connection.close()
+                if not self._is_corruption_error(exc):
+                    raise
+                self._quarantine_corrupt_database(exc)
+                self._initialize()
+                connection = self._open_connection()
+                connection.row_factory = sqlite3.Row
+                self._verify_connection(connection)
             yield connection
             connection.commit()
+        except Exception:
+            try:
+                connection.rollback()
+            except sqlite3.DatabaseError:
+                pass
+            raise
         finally:
             connection.close()
+
+    def _open_connection(self) -> sqlite3.Connection:
+        return sqlite3.connect(self.path)
+
+    @staticmethod
+    def _is_corruption_error(exc: sqlite3.DatabaseError) -> bool:
+        message = str(exc).lower()
+        return (
+            "database disk image is malformed" in message
+            or "file is not a database" in message
+            or "sqlite integrity check failed" in message
+        )
+
+    @staticmethod
+    def _verify_connection(connection: sqlite3.Connection) -> None:
+        row = connection.execute("PRAGMA quick_check").fetchone()
+        result = str(row[0] if row else "").strip()
+        if result.lower() != "ok":
+            raise sqlite3.DatabaseError(f"sqlite integrity check failed: {result}")
+
+    @staticmethod
+    def _unique_quarantine_path(path: Path, timestamp: str) -> Path:
+        candidate = path.with_name(f"{path.name}.corrupt-{timestamp}")
+        if not candidate.exists():
+            return candidate
+        for index in range(1, 1000):
+            indexed = path.with_name(f"{path.name}.corrupt-{timestamp}.{index}")
+            if not indexed.exists():
+                return indexed
+        return path.with_name(f"{path.name}.corrupt-{timestamp}.{datetime.now(timezone.utc).timestamp():.0f}")
+
+    def _quarantine_corrupt_database(self, exc: sqlite3.DatabaseError) -> None:
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        moved_paths: list[str] = []
+        related_paths = [
+            self.path,
+            self.path.with_name(f"{self.path.name}-wal"),
+            self.path.with_name(f"{self.path.name}-shm"),
+        ]
+        for source in related_paths:
+            if not source.exists():
+                continue
+            target = self._unique_quarantine_path(source, timestamp)
+            source.replace(target)
+            moved_paths.append(str(target))
+        _LOGGER.error(
+            "metadata sqlite database was corrupt and has been quarantined",
+            extra={"path": str(self.path), "quarantined_paths": moved_paths, "error": str(exc)},
+        )
 
     def _initialize(self) -> None:
         with self._lock, self._connect() as connection:

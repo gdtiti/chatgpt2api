@@ -720,6 +720,7 @@ class ChatGPTService:
                 )
                 formatted_items.append(
                     {
+                        "b64_json": b64_json,
                         "url": saved["url"],
                         "thumbnail_url": saved["thumbnail_url"],
                         "markdown": saved["markdown"],

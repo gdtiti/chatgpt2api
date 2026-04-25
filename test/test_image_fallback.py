@@ -177,6 +177,7 @@ class ImageFallbackTests(unittest.TestCase):
 
         self.assertTrue(result["data"][0]["url"].startswith("/api/view/data/"))
         self.assertIn("task-123-1", result["data"][0]["url"])
+        self.assertEqual(result["data"][0]["b64_json"], _encode_image(b"fake-image"))
 
     def test_url_response_format_prefixes_base_url_when_configured(self) -> None:
         config.data.update(
@@ -209,6 +210,7 @@ class ImageFallbackTests(unittest.TestCase):
                 result = service.generate_with_pool("prompt", "gpt-image-2", 1, response_format=None, request_id="task-456")
 
         self.assertTrue(result["data"][0]["url"].startswith("https://img.example.com/api/view/data/"))
+        self.assertEqual(result["data"][0]["b64_json"], _encode_image(b"fake-image"))
 
 
 if __name__ == "__main__":

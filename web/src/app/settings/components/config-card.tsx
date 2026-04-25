@@ -159,7 +159,9 @@ export function ConfigCard() {
               placeholder="https://hf-mirror.com/buckets/name/resolve/{date}/{file}"
               className="h-10 rounded-xl border-stone-200 bg-white"
             />
-            <p className="text-xs text-stone-500">最高优先级，支持 `{date}`、`{file}`、`{path}`。</p>
+            <p className="text-xs text-stone-500">
+              最高优先级，支持 {"{date}"}、{"{file}"}、{"{path}"}。
+            </p>
           </div>
         </div>
 

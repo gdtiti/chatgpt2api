@@ -95,7 +95,13 @@ def create_app(
             data_thread.join(timeout=1)
             job_service.shutdown(wait=False)
 
-    app = FastAPI(title="chatgpt2api", version=app_version, lifespan=lifespan)
+    app = FastAPI(
+        title="chatgpt2api",
+        version=app_version,
+        lifespan=lifespan,
+        docs_url=None,
+        redoc_url=None,
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -169,7 +175,7 @@ def create_app(
     if config.images_dir.exists():
         app.mount("/images", StaticFiles(directory=str(config.images_dir)), name="images")
 
-    @app.get("/{full_path:path}", include_in_schema=False)
+    @app.api_route("/{full_path:path}", methods=["GET", "HEAD"], include_in_schema=False)
     async def serve_web(full_path: str):
         asset = resolve_web_asset(full_path)
         if asset is not None:

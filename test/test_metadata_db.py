@@ -82,6 +82,10 @@ class MetadataDatabaseTests(unittest.TestCase):
 
             database.record_async_job(public_job, payload={"prompt": "海边日落"}, preview_images=preview_images)
 
+            self.assertTrue(database.has_async_jobs(is_admin=True, api_key_id="admin"))
+            self.assertTrue(database.has_async_jobs(is_admin=False, api_key_id="key-1"))
+            self.assertFalse(database.has_async_jobs(is_admin=False, api_key_id="missing-key"))
+
             jobs, jobs_total = database.list_async_jobs(is_admin=True, api_key_id="admin", query="日落")
             self.assertEqual(jobs_total, 1)
             self.assertEqual(jobs[0]["preview_images"][0]["wall_url"], preview_images[0]["wall_url"])

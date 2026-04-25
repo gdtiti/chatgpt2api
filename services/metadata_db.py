@@ -234,9 +234,15 @@ class MetadataDatabase:
                             payload_hint TEXT
                         );
                         CREATE INDEX IF NOT EXISTS idx_async_jobs_scope_updated ON async_jobs(api_key_id, updated_at);
+                        CREATE INDEX IF NOT EXISTS idx_async_jobs_updated ON async_jobs(updated_at);
+                        CREATE INDEX IF NOT EXISTS idx_async_jobs_scope_status_updated ON async_jobs(api_key_id, status, updated_at);
                         CREATE INDEX IF NOT EXISTS idx_async_jobs_status_type ON async_jobs(status, type);
                         CREATE INDEX IF NOT EXISTS idx_gallery_scope_updated ON gallery_images(api_key_id, updated_at);
+                        CREATE INDEX IF NOT EXISTS idx_gallery_updated ON gallery_images(updated_at);
                         CREATE INDEX IF NOT EXISTS idx_gallery_job_index ON gallery_images(job_id, image_index);
+                        CREATE INDEX IF NOT EXISTS idx_gallery_job_updated ON gallery_images(job_id, updated_at);
+                        CREATE INDEX IF NOT EXISTS idx_gallery_wall_order ON gallery_images(is_blocked, is_pinned, is_recommended, updated_at, id);
+                        CREATE INDEX IF NOT EXISTS idx_gallery_scope_wall_order ON gallery_images(api_key_id, is_blocked, is_pinned, is_recommended, updated_at, id);
                         """
                     )
                     self._ensure_column(connection, "gallery_images", "relative_path", "TEXT")
@@ -576,6 +582,17 @@ class MetadataDatabase:
                 [*params, limit_value, offset_value],
             ).fetchall()
         return [self._row_to_public_job(row) for row in rows], total
+
+    def has_async_jobs(self, *, is_admin: bool, api_key_id: str) -> bool:
+        where: list[str] = []
+        params: list[Any] = []
+        if not is_admin:
+            where.append("api_key_id = ?")
+            params.append(api_key_id)
+        where_sql = self._where_sql(where)
+        with self._lock, self._connect() as connection:
+            row = connection.execute(f"SELECT 1 FROM async_jobs {where_sql} LIMIT 1", params).fetchone()
+        return row is not None
 
     def summarize_async_jobs(self, *, is_admin: bool, api_key_id: str) -> dict[str, int]:
         where: list[str] = []

@@ -124,6 +124,39 @@ class _DelayedChatGPTService:
 
 
 class AsyncJobRouteTests(unittest.TestCase):
+    def test_empty_metadata_backfill_is_attempted_once_per_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            api_key_service = APIKeyService(Path(tmp_dir) / "api_keys.json", admin_key_provider=lambda: "chatgpt2api")
+            created = api_key_service.create_key(name="empty-client")
+            principal = api_key_service.authenticate(created["plain_text"])
+            self.assertIsNotNone(principal)
+            assert principal is not None
+
+            job_service = JobService(
+                Path(tmp_dir) / "jobs",
+                Path(tmp_dir) / "job_results",
+                _DelayedChatGPTService(delay=0.0),
+                task_logs_dir=Path(tmp_dir) / "task_logs",
+                max_workers=1,
+            )
+            scan_calls: list[str] = []
+
+            def fake_scan(*args, **kwargs):
+                scan_calls.append("scan")
+                return []
+
+            try:
+                job_service._scan_job_files = fake_scan  # type: ignore[method-assign]
+
+                job_service.list_jobs(principal)
+                job_service.summarize_jobs(principal)
+                job_service.list_gallery_jobs(principal)
+                job_service.list_waterfall_images(principal)
+
+                self.assertEqual(len(scan_calls), 1)
+            finally:
+                job_service.shutdown(wait=False)
+
     def test_async_job_list_supports_filters_and_tracking_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             api_key_service = APIKeyService(Path(tmp_dir) / "api_keys.json", admin_key_provider=lambda: "chatgpt2api")

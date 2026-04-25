@@ -220,6 +220,7 @@ class JobService:
         metadata_path = self.jobs_dir.parent / "metadata.sqlite3"
         self.metadata_db = metadata_db if metadata_db.path == metadata_path else MetadataDatabase(metadata_path)
         self._lock = Lock()
+        self._metadata_backfill_attempted_scopes: set[str] = set()
         self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="async-job")
 
     def shutdown(self, *, wait: bool = False) -> None:
@@ -402,14 +403,12 @@ class JobService:
         return jobs
 
     def _backfill_metadata_if_empty(self, principal: AuthPrincipal) -> None:
-        existing, total = self.metadata_db.list_async_jobs(
-            is_admin=principal.is_admin,
-            api_key_id=principal.key_id,
-            limit=1,
-            offset=0,
-        )
-        if total > 0 or existing:
+        if self.metadata_db.has_async_jobs(is_admin=principal.is_admin, api_key_id=principal.key_id):
             return
+        scope_key = "*" if principal.is_admin else principal.key_id
+        if scope_key in self._metadata_backfill_attempted_scopes:
+            return
+        self._metadata_backfill_attempted_scopes.add(scope_key)
         for public_job in self._scan_job_files(principal, limit=500):
             job = self._load_job(str(public_job.get("id") or ""))
             result = self._load_result(str(public_job.get("id") or ""))

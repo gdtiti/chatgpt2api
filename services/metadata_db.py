@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -21,10 +22,15 @@ class MetadataDatabase:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self):
         connection = sqlite3.connect(self.path)
         connection.row_factory = sqlite3.Row
-        return connection
+        try:
+            yield connection
+            connection.commit()
+        finally:
+            connection.close()
 
     def _initialize(self) -> None:
         with self._lock, self._connect() as connection:
@@ -75,6 +81,33 @@ class MetadataDatabase:
                     payload_json TEXT,
                     recorded_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS gallery_images (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_id TEXT NOT NULL,
+                    image_index INTEGER NOT NULL,
+                    image_id TEXT,
+                    type TEXT,
+                    model TEXT,
+                    prompt_preview TEXT,
+                    created_at TEXT,
+                    updated_at TEXT,
+                    api_key_id TEXT,
+                    api_key_name TEXT,
+                    src TEXT NOT NULL,
+                    url TEXT,
+                    thumbnail_url TEXT,
+                    relative_path TEXT,
+                    thumbnail_relative_path TEXT,
+                    wall_url TEXT,
+                    wall_relative_path TEXT,
+                    markdown TEXT,
+                    is_recommended INTEGER NOT NULL DEFAULT 0,
+                    is_pinned INTEGER NOT NULL DEFAULT 0,
+                    is_blocked INTEGER NOT NULL DEFAULT 0,
+                    payload_json TEXT,
+                    recorded_at TEXT NOT NULL,
+                    UNIQUE(job_id, image_index)
+                );
                 CREATE TABLE IF NOT EXISTS task_logs (
                     job_id TEXT PRIMARY KEY,
                     log_path TEXT NOT NULL,
@@ -98,8 +131,103 @@ class MetadataDatabase:
                     request_id TEXT,
                     payload_hint TEXT
                 );
+                CREATE INDEX IF NOT EXISTS idx_async_jobs_scope_updated ON async_jobs(api_key_id, updated_at);
+                CREATE INDEX IF NOT EXISTS idx_async_jobs_status_type ON async_jobs(status, type);
+                CREATE INDEX IF NOT EXISTS idx_gallery_scope_updated ON gallery_images(api_key_id, updated_at);
+                CREATE INDEX IF NOT EXISTS idx_gallery_job_index ON gallery_images(job_id, image_index);
                 """
             )
+            self._ensure_column(connection, "gallery_images", "relative_path", "TEXT")
+            self._ensure_column(connection, "gallery_images", "thumbnail_relative_path", "TEXT")
+            self._ensure_column(connection, "gallery_images", "wall_url", "TEXT")
+            self._ensure_column(connection, "gallery_images", "wall_relative_path", "TEXT")
+            self._ensure_column(connection, "gallery_images", "is_recommended", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(connection, "gallery_images", "is_pinned", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(connection, "gallery_images", "is_blocked", "INTEGER NOT NULL DEFAULT 0")
+
+    @staticmethod
+    def _ensure_column(connection: sqlite3.Connection, table_name: str, column_name: str, definition: str) -> None:
+        columns = {str(row["name"]) for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()}
+        if column_name not in columns:
+            connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
+
+    @staticmethod
+    def _decode_json_object(value: object) -> dict[str, Any]:
+        try:
+            payload = json.loads(str(value or "{}"))
+        except Exception:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    @staticmethod
+    def _decode_json_list(value: object) -> list[dict[str, Any]]:
+        try:
+            payload = json.loads(str(value or "[]"))
+        except Exception:
+            return []
+        if not isinstance(payload, list):
+            return []
+        return [item for item in payload if isinstance(item, dict)]
+
+    @staticmethod
+    def _safe_sort(value: str | None, allowed: set[str], default: str) -> str:
+        candidate = str(value or "").strip()
+        return candidate if candidate in allowed else default
+
+    @staticmethod
+    def _row_to_public_job(row: sqlite3.Row) -> dict[str, Any]:
+        preview_images = MetadataDatabase._decode_json_list(row["preview_images_json"])
+        error_message = str(row["error_message"] or "").strip()
+        return {
+            "id": row["job_id"],
+            "type": row["type"],
+            "status": row["status"],
+            "model": row["model"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "log_path": row["log_path"],
+            "api_key_id": row["api_key_id"],
+            "api_key_name": row["api_key_name"],
+            "prompt_preview": row["prompt_preview"],
+            "requested_count": int(row["requested_count"] or 0),
+            "size": row["size"],
+            "input_image_count": int(row["input_image_count"] or 0),
+            "result_ready": bool(row["result_ready"]),
+            "result_count": int(row["result_count"] or 0),
+            "preview_images": preview_images,
+            "error": {"message": error_message} if error_message else None,
+        }
+
+    @staticmethod
+    def _append_job_filters(
+            where: list[str],
+            params: list[Any],
+            *,
+            is_admin: bool,
+            api_key_id: str,
+            status: str | None = None,
+            job_type: str | None = None,
+            query: str | None = None,
+    ) -> None:
+        if not is_admin:
+            where.append("api_key_id = ?")
+            params.append(api_key_id)
+        if status:
+            where.append("status = ?")
+            params.append(status)
+        if job_type:
+            where.append("type = ?")
+            params.append(job_type)
+        if query:
+            like = f"%{query}%"
+            where.append(
+                "(job_id LIKE ? OR type LIKE ? OR model LIKE ? OR prompt_preview LIKE ? OR api_key_name LIKE ?)"
+            )
+            params.extend([like, like, like, like, like])
+
+    @staticmethod
+    def _where_sql(where: list[str]) -> str:
+        return f"WHERE {' AND '.join(where)}" if where else ""
 
     def record_settings(self, payload: dict[str, Any]) -> None:
         saved_at = _utc_now()
@@ -208,6 +336,390 @@ class MetadataDatabase:
                     recorded_at,
                 ),
             )
+            self._record_gallery_images_locked(
+                connection,
+                public_job,
+                preview_images or [],
+                payload or {},
+                recorded_at=recorded_at,
+            )
+
+    def _record_gallery_images_locked(
+            self,
+            connection: sqlite3.Connection,
+            public_job: dict[str, Any],
+            preview_images: list[dict[str, Any]],
+            payload: dict[str, Any],
+            *,
+            recorded_at: str,
+    ) -> None:
+        job_id = str(public_job.get("id") or "").strip()
+        if not job_id:
+            return
+        existing_states = {
+            int(row["image_index"]): {
+                "is_recommended": int(row["is_recommended"] or 0),
+                "is_pinned": int(row["is_pinned"] or 0),
+                "is_blocked": int(row["is_blocked"] or 0),
+            }
+            for row in connection.execute(
+                "SELECT image_index, is_recommended, is_pinned, is_blocked FROM gallery_images WHERE job_id = ?",
+                (job_id,),
+            ).fetchall()
+        }
+        connection.execute("DELETE FROM gallery_images WHERE job_id = ?", (job_id,))
+        if not preview_images:
+            return
+        payload_json = json.dumps(payload or {}, ensure_ascii=False)
+        for index, item in enumerate(preview_images, start=1):
+            src = str(item.get("src") or item.get("thumbnail_url") or item.get("url") or "").strip()
+            if not src:
+                continue
+            state = existing_states.get(index, {})
+            connection.execute(
+                """
+                INSERT INTO gallery_images(
+                    job_id, image_index, image_id, type, model, prompt_preview, created_at, updated_at,
+                    api_key_id, api_key_name, src, url, thumbnail_url, relative_path, thumbnail_relative_path,
+                    wall_url, wall_relative_path, markdown, is_recommended, is_pinned, is_blocked,
+                    payload_json, recorded_at
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(job_id, image_index) DO UPDATE SET
+                    image_id=excluded.image_id,
+                    type=excluded.type,
+                    model=excluded.model,
+                    prompt_preview=excluded.prompt_preview,
+                    created_at=excluded.created_at,
+                    updated_at=excluded.updated_at,
+                    api_key_id=excluded.api_key_id,
+                    api_key_name=excluded.api_key_name,
+                    src=excluded.src,
+                    url=excluded.url,
+                    thumbnail_url=excluded.thumbnail_url,
+                    relative_path=excluded.relative_path,
+                    thumbnail_relative_path=excluded.thumbnail_relative_path,
+                    wall_url=excluded.wall_url,
+                    wall_relative_path=excluded.wall_relative_path,
+                    markdown=excluded.markdown,
+                    payload_json=excluded.payload_json,
+                    recorded_at=excluded.recorded_at
+                """,
+                (
+                    job_id,
+                    index,
+                    str(item.get("id") or "") or None,
+                    str(public_job.get("type") or ""),
+                    str(public_job.get("model") or ""),
+                    str(public_job.get("prompt_preview") or "") or None,
+                    str(public_job.get("created_at") or "") or None,
+                    str(public_job.get("updated_at") or "") or None,
+                    str(public_job.get("api_key_id") or "") or None,
+                    str(public_job.get("api_key_name") or "") or None,
+                    src,
+                    str(item.get("url") or "") or None,
+                    str(item.get("thumbnail_url") or "") or None,
+                    str(item.get("relative_path") or "") or None,
+                    str(item.get("thumbnail_relative_path") or "") or None,
+                    str(item.get("wall_url") or "") or None,
+                    str(item.get("wall_relative_path") or "") or None,
+                    str(item.get("markdown") or "") or None,
+                    int(state.get("is_recommended") or 0),
+                    int(state.get("is_pinned") or 0),
+                    int(state.get("is_blocked") or 0),
+                    payload_json,
+                    recorded_at,
+                ),
+            )
+
+    def list_async_jobs(
+            self,
+            *,
+            is_admin: bool,
+            api_key_id: str,
+            limit: int = 50,
+            offset: int = 0,
+            status: str | None = None,
+            job_type: str | None = None,
+            query: str | None = None,
+            sort: str | None = None,
+            order: str | None = None,
+    ) -> tuple[list[dict[str, Any]], int]:
+        limit_value = max(1, min(int(limit or 50), 200))
+        offset_value = max(0, int(offset or 0))
+        sort_column = self._safe_sort(sort, {"created_at", "updated_at", "status", "type", "model"}, "updated_at")
+        direction = "ASC" if str(order or "").lower() == "asc" else "DESC"
+        where: list[str] = []
+        params: list[Any] = []
+        self._append_job_filters(
+            where,
+            params,
+            is_admin=is_admin,
+            api_key_id=api_key_id,
+            status=str(status or "").strip() or None,
+            job_type=str(job_type or "").strip() or None,
+            query=str(query or "").strip() or None,
+        )
+        where_sql = self._where_sql(where)
+        with self._lock, self._connect() as connection:
+            total = int(connection.execute(f"SELECT COUNT(*) FROM async_jobs {where_sql}", params).fetchone()[0])
+            rows = connection.execute(
+                f"""
+                SELECT * FROM async_jobs
+                {where_sql}
+                ORDER BY {sort_column} {direction}, job_id {direction}
+                LIMIT ? OFFSET ?
+                """,
+                [*params, limit_value, offset_value],
+            ).fetchall()
+        return [self._row_to_public_job(row) for row in rows], total
+
+    def summarize_async_jobs(self, *, is_admin: bool, api_key_id: str) -> dict[str, int]:
+        where: list[str] = []
+        params: list[Any] = []
+        if not is_admin:
+            where.append("api_key_id = ?")
+            params.append(api_key_id)
+        where_sql = self._where_sql(where)
+        summary = {
+            "total": 0,
+            "queued": 0,
+            "running": 0,
+            "succeeded": 0,
+            "failed": 0,
+        }
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                f"SELECT status, COUNT(*) AS count FROM async_jobs {where_sql} GROUP BY status",
+                params,
+            ).fetchall()
+        for row in rows:
+            count = int(row["count"] or 0)
+            summary["total"] += count
+            status = str(row["status"] or "")
+            if status in summary:
+                summary[status] = count
+        return summary
+
+    def list_gallery_jobs(
+            self,
+            *,
+            is_admin: bool,
+            api_key_id: str,
+            limit: int = 20,
+            offset: int = 0,
+            query: str | None = None,
+            sort: str | None = None,
+            order: str | None = None,
+    ) -> tuple[list[dict[str, Any]], int]:
+        limit_value = max(1, min(int(limit or 20), 100))
+        offset_value = max(0, int(offset or 0))
+        sort_column = self._safe_sort(sort, {"created_at", "updated_at", "model", "type"}, "updated_at")
+        direction = "ASC" if str(order or "").lower() == "asc" else "DESC"
+        where: list[str] = []
+        params: list[Any] = []
+        if not is_admin:
+            where.append("api_key_id = ?")
+            params.append(api_key_id)
+        cleaned_query = str(query or "").strip()
+        if cleaned_query:
+            like = f"%{cleaned_query}%"
+            where.append("(job_id LIKE ? OR model LIKE ? OR prompt_preview LIKE ? OR api_key_name LIKE ?)")
+            params.extend([like, like, like, like])
+        where_sql = self._where_sql(where)
+        with self._lock, self._connect() as connection:
+            total = int(
+                connection.execute(
+                    f"SELECT COUNT(*) FROM (SELECT job_id FROM gallery_images {where_sql} GROUP BY job_id)",
+                    params,
+                ).fetchone()[0]
+            )
+            job_rows = connection.execute(
+                f"""
+                SELECT
+                    job_id,
+                    MAX(type) AS type,
+                    MAX(model) AS model,
+                    MAX(prompt_preview) AS prompt_preview,
+                    MIN(created_at) AS created_at,
+                    MAX(updated_at) AS updated_at,
+                    MAX(api_key_id) AS api_key_id,
+                    MAX(api_key_name) AS api_key_name,
+                    COUNT(*) AS result_count
+                FROM gallery_images
+                {where_sql}
+                GROUP BY job_id
+                ORDER BY {sort_column} {direction}, job_id {direction}
+                LIMIT ? OFFSET ?
+                """,
+                [*params, limit_value, offset_value],
+            ).fetchall()
+            job_ids = [str(row["job_id"]) for row in job_rows]
+            image_rows: list[sqlite3.Row] = []
+            if job_ids:
+                placeholders = ",".join("?" for _ in job_ids)
+                image_rows = connection.execute(
+                    f"""
+                    SELECT * FROM gallery_images
+                    WHERE job_id IN ({placeholders})
+                    ORDER BY job_id, image_index ASC
+                    """,
+                    job_ids,
+                ).fetchall()
+        images_by_job: dict[str, list[dict[str, Any]]] = {}
+        for row in image_rows:
+            job_id = str(row["job_id"])
+            image = {
+                "id": row["image_id"] or f"{job_id}-{row['image_index']}",
+                "src": row["src"],
+                "url": row["url"],
+                "thumbnail_url": row["thumbnail_url"],
+                "relative_path": row["relative_path"],
+                "thumbnail_relative_path": row["thumbnail_relative_path"],
+                "wall_url": row["wall_url"],
+                "wall_relative_path": row["wall_relative_path"],
+                "is_recommended": bool(row["is_recommended"]),
+                "is_pinned": bool(row["is_pinned"]),
+                "is_blocked": bool(row["is_blocked"]),
+                "markdown": row["markdown"],
+            }
+            images_by_job.setdefault(job_id, []).append(image)
+        items: list[dict[str, Any]] = []
+        for row in job_rows:
+            job_id = str(row["job_id"])
+            items.append({
+                "id": job_id,
+                "type": row["type"],
+                "status": "succeeded",
+                "model": row["model"],
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+                "log_path": None,
+                "api_key_id": row["api_key_id"],
+                "api_key_name": row["api_key_name"],
+                "prompt_preview": row["prompt_preview"],
+                "requested_count": int(row["result_count"] or 0),
+                "size": None,
+                "input_image_count": 0,
+                "result_ready": True,
+                "result_count": int(row["result_count"] or 0),
+                "preview_images": images_by_job.get(job_id, []),
+                "error": None,
+            })
+        return items, total
+
+    def list_waterfall_images(
+            self,
+            *,
+            is_admin: bool,
+            api_key_id: str,
+            limit: int = 40,
+            offset: int = 0,
+            query: str | None = None,
+            include_blocked: bool = False,
+    ) -> tuple[list[dict[str, Any]], int]:
+        limit_value = max(1, min(int(limit or 40), 100))
+        offset_value = max(0, int(offset or 0))
+        where: list[str] = []
+        params: list[Any] = []
+        if not is_admin:
+            where.append("api_key_id = ?")
+            params.append(api_key_id)
+        if not include_blocked:
+            where.append("is_blocked = 0")
+        cleaned_query = str(query or "").strip()
+        if cleaned_query:
+            like = f"%{cleaned_query}%"
+            where.append("(job_id LIKE ? OR model LIKE ? OR prompt_preview LIKE ? OR api_key_name LIKE ?)")
+            params.extend([like, like, like, like])
+        where_sql = self._where_sql(where)
+        with self._lock, self._connect() as connection:
+            total = int(connection.execute(f"SELECT COUNT(*) FROM gallery_images {where_sql}", params).fetchone()[0])
+            rows = connection.execute(
+                f"""
+                SELECT * FROM gallery_images
+                {where_sql}
+                ORDER BY is_pinned DESC, is_recommended DESC, updated_at DESC, id DESC
+                LIMIT ? OFFSET ?
+                """,
+                [*params, limit_value, offset_value],
+            ).fetchall()
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            job_id = str(row["job_id"])
+            items.append({
+                "id": row["image_id"] or f"{job_id}-{row['image_index']}",
+                "job_id": job_id,
+                "image_index": int(row["image_index"] or 0),
+                "type": row["type"],
+                "model": row["model"],
+                "prompt_preview": row["prompt_preview"],
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+                "api_key_id": row["api_key_id"],
+                "api_key_name": row["api_key_name"],
+                "src": row["src"],
+                "url": row["url"],
+                "thumbnail_url": row["thumbnail_url"],
+                "relative_path": row["relative_path"],
+                "thumbnail_relative_path": row["thumbnail_relative_path"],
+                "wall_url": row["wall_url"],
+                "wall_relative_path": row["wall_relative_path"],
+                "markdown": row["markdown"],
+                "is_recommended": bool(row["is_recommended"]),
+                "is_pinned": bool(row["is_pinned"]),
+                "is_blocked": bool(row["is_blocked"]),
+            })
+        return items, total
+
+    def update_gallery_image_state(
+            self,
+            *,
+            job_id: str,
+            image_index: int,
+            is_recommended: bool | None = None,
+            is_pinned: bool | None = None,
+            is_blocked: bool | None = None,
+    ) -> dict[str, Any] | None:
+        assignments: list[str] = []
+        params: list[Any] = []
+        if is_recommended is not None:
+            assignments.append("is_recommended = ?")
+            params.append(1 if is_recommended else 0)
+        if is_pinned is not None:
+            assignments.append("is_pinned = ?")
+            params.append(1 if is_pinned else 0)
+        if is_blocked is not None:
+            assignments.append("is_blocked = ?")
+            params.append(1 if is_blocked else 0)
+        if not assignments:
+            return None
+        params.extend([job_id, image_index])
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                f"UPDATE gallery_images SET {', '.join(assignments)} WHERE job_id = ? AND image_index = ?",
+                params,
+            )
+            row = connection.execute(
+                "SELECT * FROM gallery_images WHERE job_id = ? AND image_index = ?",
+                (job_id, image_index),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "id": row["image_id"] or f"{row['job_id']}-{row['image_index']}",
+            "job_id": row["job_id"],
+            "image_index": int(row["image_index"] or 0),
+            "src": row["src"],
+            "url": row["url"],
+            "thumbnail_url": row["thumbnail_url"],
+            "wall_url": row["wall_url"],
+            "relative_path": row["relative_path"],
+            "thumbnail_relative_path": row["thumbnail_relative_path"],
+            "wall_relative_path": row["wall_relative_path"],
+            "is_recommended": bool(row["is_recommended"]),
+            "is_pinned": bool(row["is_pinned"]),
+            "is_blocked": bool(row["is_blocked"]),
+        }
 
     def record_task_log(self, job_id: str, log_path: str) -> None:
         updated_at = _utc_now()

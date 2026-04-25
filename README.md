@@ -40,6 +40,14 @@ CHATGPT2API_IMAGE_FAILURE_STRATEGY
 CHATGPT2API_IMAGE_RETRY_COUNT
 CHATGPT2API_IMAGE_PARALLEL_ATTEMPTS
 CHATGPT2API_IMAGE_PLACEHOLDER_PATH
+CHATGPT2API_IMAGE_RESPONSE_FORMAT
+CHATGPT2API_IMAGE_THUMBNAIL_MAX_SIZE
+CHATGPT2API_IMAGE_THUMBNAIL_QUALITY
+CHATGPT2API_IMAGE_WALL_THUMBNAIL_MAX_SIZE
+CHATGPT2API_IMAGE_RETENTION_DAYS
+CHATGPT2API_TASK_LOG_RETENTION_DAYS
+CHATGPT2API_DATA_CLEANUP_ENABLED
+CHATGPT2API_DATA_CLEANUP_INTERVAL_MINUTES
 ```
 
 启动端口额外支持通用环境变量 `PORT`。优先级是：`CHATGPT2API_PORT` > `PORT` > `config.json` 中的 `port` > 默认 `80`。
@@ -63,6 +71,7 @@ CHATGPT2API_IMAGE_PLACEHOLDER_PATH
 - 图片生成与编辑支持 `size=1:1/16:9/9:16/4:3/3:4`
 - 图片生成支持后台配置失败策略：`fail / retry / placeholder`
 - 图片生成支持后台配置并发尝试数；单次请求可并发多个上游尝试并返回首个成功结果
+- URL 返回模式会保存原图、小缩略图与瀑布墙预览图，缩略图保持原图比例，尺寸和质量可在后台或环境变量中配置
 - 支持 Codex 中的画图接口逆向，仅 `Plus` / `Team` / `Pro` 订阅可用，模型别名为 `codex-gpt-image-2`，如有需要可自行在其他场景映射回 `gpt-image-2`，用于和官网画图区分；也就意味着同一账号会同时有官网和 Codex 两份生图额度
 
 ### 在线画图功能

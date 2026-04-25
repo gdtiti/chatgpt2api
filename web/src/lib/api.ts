@@ -69,6 +69,9 @@ export type SettingsConfig = {
   image_parallel_attempts?: number | string;
   image_placeholder_path?: string;
   image_response_format?: "b64_json" | "url" | string;
+  image_thumbnail_max_size?: number | string;
+  image_thumbnail_quality?: number | string;
+  image_wall_thumbnail_max_size?: number | string;
   image_retention_days?: number | string;
   task_log_retention_days?: number | string;
   system_log_max_mb?: number | string;
@@ -109,8 +112,24 @@ export type ImageResultItem = {
 export type PreviewImageItem = {
   id: string;
   src: string;
+  job_id?: string;
+  image_index?: number;
+  type?: string | null;
+  model?: string | null;
+  prompt_preview?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  api_key_id?: string | null;
+  api_key_name?: string | null;
   url?: string | null;
   thumbnail_url?: string | null;
+  relative_path?: string | null;
+  thumbnail_relative_path?: string | null;
+  wall_url?: string | null;
+  wall_relative_path?: string | null;
+  is_recommended?: boolean;
+  is_pinned?: boolean;
+  is_blocked?: boolean;
   markdown?: string | null;
 };
 
@@ -166,6 +185,28 @@ export type AsyncJobSummary = {
   running: number;
   succeeded: number;
   failed: number;
+};
+
+export type PaginatedAsyncJobsResponse = {
+  items: AsyncJobItem[];
+  total: number;
+  limit: number;
+  offset: number;
+  summary: AsyncJobSummary;
+};
+
+export type PaginatedGalleryResponse = {
+  items: AsyncJobItem[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type PaginatedWaterfallResponse = {
+  items: PreviewImageItem[];
+  total: number;
+  limit: number;
+  offset: number;
 };
 
 export type DataStatsCategory = {
@@ -389,12 +430,19 @@ export async function uploadPlaceholderImage(file: File) {
 
 export async function fetchAsyncJobs(params?: {
   limit?: number;
+  offset?: number;
   status?: string;
   type?: string;
+  query?: string;
+  sort?: string;
+  order?: string;
 }) {
   const query = new URLSearchParams();
   if (params?.limit) {
     query.set("limit", String(params.limit));
+  }
+  if (params?.offset) {
+    query.set("offset", String(params.offset));
   }
   if (params?.status && params.status !== "all") {
     query.set("status", params.status);
@@ -402,8 +450,82 @@ export async function fetchAsyncJobs(params?: {
   if (params?.type && params.type !== "all") {
     query.set("type", params.type);
   }
+  if (params?.query?.trim()) {
+    query.set("query", params.query.trim());
+  }
+  if (params?.sort) {
+    query.set("sort", params.sort);
+  }
+  if (params?.order) {
+    query.set("order", params.order);
+  }
   const suffix = query.size > 0 ? `?${query.toString()}` : "";
-  return httpRequest<{ items: AsyncJobItem[]; summary: AsyncJobSummary }>(`/api/async/jobs${suffix}`);
+  return httpRequest<PaginatedAsyncJobsResponse>(`/api/async/jobs${suffix}`);
+}
+
+export async function fetchGalleryJobs(params?: {
+  limit?: number;
+  offset?: number;
+  query?: string;
+  sort?: string;
+  order?: string;
+}) {
+  const query = new URLSearchParams();
+  if (params?.limit) {
+    query.set("limit", String(params.limit));
+  }
+  if (params?.offset) {
+    query.set("offset", String(params.offset));
+  }
+  if (params?.query?.trim()) {
+    query.set("query", params.query.trim());
+  }
+  if (params?.sort) {
+    query.set("sort", params.sort);
+  }
+  if (params?.order) {
+    query.set("order", params.order);
+  }
+  const suffix = query.size > 0 ? `?${query.toString()}` : "";
+  return httpRequest<PaginatedGalleryResponse>(`/api/gallery${suffix}`);
+}
+
+export async function fetchWaterfallImages(params?: {
+  limit?: number;
+  offset?: number;
+  query?: string;
+  include_blocked?: boolean;
+}) {
+  const query = new URLSearchParams();
+  if (params?.limit) {
+    query.set("limit", String(params.limit));
+  }
+  if (params?.offset) {
+    query.set("offset", String(params.offset));
+  }
+  if (params?.query?.trim()) {
+    query.set("query", params.query.trim());
+  }
+  if (params?.include_blocked) {
+    query.set("include_blocked", "true");
+  }
+  const suffix = query.size > 0 ? `?${query.toString()}` : "";
+  return httpRequest<PaginatedWaterfallResponse>(`/api/gallery/wall${suffix}`);
+}
+
+export async function updateGalleryImageState(
+  jobId: string,
+  imageIndex: number,
+  payload: {
+    is_recommended?: boolean | null;
+    is_pinned?: boolean | null;
+    is_blocked?: boolean | null;
+  },
+) {
+  return httpRequest<{ item: PreviewImageItem }>(`/api/gallery/images/${jobId}/${imageIndex}`, {
+    method: "POST",
+    body: payload,
+  });
 }
 
 export async function fetchAsyncJob(jobId: string) {

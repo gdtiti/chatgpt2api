@@ -18,6 +18,13 @@ class AsyncJobCreateRequest(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
+class GalleryImageStateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    is_recommended: bool | None = None
+    is_pinned: bool | None = None
+    is_blocked: bool | None = None
+
+
 def _sse_line(event: str, payload: dict[str, object]) -> bytes:
     return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n".encode("utf-8")
 
@@ -49,14 +56,100 @@ def create_router(job_service: JobService) -> APIRouter:
     async def list_jobs(
             authorization: str | None = Header(default=None),
             limit: int = Query(default=50, ge=1, le=200),
+            offset: int = Query(default=0, ge=0),
             status: str | None = Query(default=None),
             job_type: str | None = Query(default=None, alias="type"),
+            query: str | None = Query(default=None),
+            sort: str | None = Query(default="updated_at"),
+            order: str | None = Query(default="desc"),
     ):
         principal = require_client_principal(authorization)
+        items, total = job_service.list_jobs(
+            principal,
+            limit=limit,
+            offset=offset,
+            status=status,
+            job_type=job_type,
+            query=query,
+            sort=sort,
+            order=order,
+        )
         return {
-            "items": job_service.list_jobs(principal, limit=limit, status=status, job_type=job_type),
+            "items": items,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
             "summary": job_service.summarize_jobs(principal),
         }
+
+    @router.get("/api/gallery")
+    async def list_gallery(
+            authorization: str | None = Header(default=None),
+            limit: int = Query(default=20, ge=1, le=100),
+            offset: int = Query(default=0, ge=0),
+            query: str | None = Query(default=None),
+            sort: str | None = Query(default="updated_at"),
+            order: str | None = Query(default="desc"),
+    ):
+        principal = require_client_principal(authorization)
+        items, total = job_service.list_gallery_jobs(
+            principal,
+            limit=limit,
+            offset=offset,
+            query=query,
+            sort=sort,
+            order=order,
+        )
+        return {
+            "items": items,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }
+
+    @router.get("/api/gallery/wall")
+    async def list_gallery_wall(
+            authorization: str | None = Header(default=None),
+            limit: int = Query(default=40, ge=1, le=100),
+            offset: int = Query(default=0, ge=0),
+            query: str | None = Query(default=None),
+            include_blocked: bool = Query(default=False),
+    ):
+        principal = require_client_principal(authorization)
+        items, total = job_service.list_waterfall_images(
+            principal,
+            limit=limit,
+            offset=offset,
+            query=query,
+            include_blocked=include_blocked,
+        )
+        return {
+            "items": items,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }
+
+    @router.post("/api/gallery/images/{job_id}/{image_index}")
+    async def update_gallery_image_state(
+            job_id: str,
+            image_index: int,
+            body: GalleryImageStateRequest,
+            authorization: str | None = Header(default=None),
+    ):
+        principal = require_client_principal(authorization)
+        if not principal.is_admin:
+            raise HTTPException(status_code=403, detail={"error": "admin key required"})
+        item = job_service.update_gallery_image_state(
+            job_id,
+            image_index,
+            is_recommended=body.is_recommended,
+            is_pinned=body.is_pinned,
+            is_blocked=body.is_blocked,
+        )
+        if item is None:
+            raise HTTPException(status_code=404, detail={"error": "image not found"})
+        return {"item": item}
 
     @router.get("/api/async/jobs/{job_id}")
     async def get_job(job_id: str, authorization: str | None = Header(default=None)):
@@ -112,6 +205,7 @@ def create_router(job_service: JobService) -> APIRouter:
                 if status != last_status:
                     yield _sse_line("status", {"job": job})
                     last_status = status
+                yield _sse_line("ping", {"job_id": job_id, "status": status, "ts": int(time.time())})
                 if status == "succeeded":
                     yield _sse_line("result", {"job": job, "result": result.get("result") if isinstance(result, dict) else None})
                     yield b"data: [DONE]\n\n"
@@ -120,7 +214,6 @@ def create_router(job_service: JobService) -> APIRouter:
                     yield _sse_line("error", {"job": job})
                     yield b"data: [DONE]\n\n"
                     return
-                yield _sse_line("ping", {"job_id": job_id, "status": status, "ts": int(time.time())})
                 time.sleep(ping_interval)
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")

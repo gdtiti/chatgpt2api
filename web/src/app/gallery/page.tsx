@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Images, LoaderCircle, RefreshCw } from "lucide-react";
+import { ChevronLeft, ChevronRight, Images, LoaderCircle, RefreshCw, Search } from "lucide-react";
 import { toast } from "sonner";
 
 import { ImageLightbox } from "@/components/image-lightbox";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { fetchAsyncJobs, type AsyncJobItem, type PreviewImageItem } from "@/lib/api";
+import { Input } from "@/components/ui/input";
+import { fetchGalleryJobs, type AsyncJobItem, type PreviewImageItem } from "@/lib/api";
 
 function formatTime(value?: string | null) {
   if (!value) {
@@ -36,6 +37,11 @@ export default function GalleryPage() {
   const didLoadRef = useRef(false);
   const [jobs, setJobs] = useState<AsyncJobItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [page, setPage] = useState(1);
+  const [limit] = useState(20);
+  const [total, setTotal] = useState(0);
+  const [queryInput, setQueryInput] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const [lightboxItems, setLightboxItems] = useState<Array<{ id: string; src: string }>>([]);
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const [lightboxOpen, setLightboxOpen] = useState(false);
@@ -45,14 +51,22 @@ export default function GalleryPage() {
       jobs.filter((job) => job.status === "succeeded" && galleryItemsFromJob(job).length > 0),
     [jobs],
   );
+  const pageCount = Math.max(1, Math.ceil(total / limit));
 
   const loadJobs = async (silent = false) => {
     if (!silent) {
       setIsLoading(true);
     }
     try {
-      const response = await fetchAsyncJobs({ limit: 200 });
+      const response = await fetchGalleryJobs({
+        limit,
+        offset: (page - 1) * limit,
+        query: searchQuery,
+        sort: "updated_at",
+        order: "desc",
+      });
       setJobs(response.items);
+      setTotal(response.total);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "加载画廊失败");
     } finally {
@@ -69,6 +83,17 @@ export default function GalleryPage() {
     didLoadRef.current = true;
     void loadJobs();
   }, []);
+
+  useEffect(() => {
+    if (!didLoadRef.current) {
+      return;
+    }
+    void loadJobs();
+  }, [page, searchQuery]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [searchQuery]);
 
   return (
     <>
@@ -93,6 +118,55 @@ export default function GalleryPage() {
 
         <Card className="rounded-2xl border-white/80 bg-white/90 shadow-sm">
           <CardContent className="space-y-4 p-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Input
+                  value={queryInput}
+                  onChange={(event) => setQueryInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      setSearchQuery(queryInput.trim());
+                    }
+                  }}
+                  placeholder="搜索提示词、模型、任务 ID"
+                  className="h-10 w-[260px] rounded-xl border-stone-200 bg-white"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-10 rounded-xl border-stone-200 bg-white px-3 text-stone-700"
+                  onClick={() => setSearchQuery(queryInput.trim())}
+                >
+                  <Search className="size-4" />
+                  搜索
+                </Button>
+              </div>
+              <div className="flex items-center gap-2 text-sm text-stone-500">
+                <span>
+                  共 {total} 个任务，第 {page} / {pageCount} 页
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-9 rounded-xl border-stone-200 bg-white px-3 text-stone-700"
+                  disabled={isLoading || page <= 1}
+                  onClick={() => setPage((value) => Math.max(1, value - 1))}
+                >
+                  <ChevronLeft className="size-4" />
+                  上一页
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-9 rounded-xl border-stone-200 bg-white px-3 text-stone-700"
+                  disabled={isLoading || page >= pageCount}
+                  onClick={() => setPage((value) => Math.min(pageCount, value + 1))}
+                >
+                  下一页
+                  <ChevronRight className="size-4" />
+                </Button>
+              </div>
+            </div>
             {isLoading ? (
               <div className="flex items-center justify-center py-14">
                 <LoaderCircle className="size-5 animate-spin text-stone-400" />

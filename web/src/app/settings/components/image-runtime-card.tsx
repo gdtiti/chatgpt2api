@@ -33,6 +33,9 @@ export function ImageRuntimeCard() {
   const setImageParallelAttempts = useSettingsStore((state) => state.setImageParallelAttempts);
   const setImagePlaceholderPath = useSettingsStore((state) => state.setImagePlaceholderPath);
   const setImageResponseFormat = useSettingsStore((state) => state.setImageResponseFormat);
+  const setImageThumbnailMaxSize = useSettingsStore((state) => state.setImageThumbnailMaxSize);
+  const setImageThumbnailQuality = useSettingsStore((state) => state.setImageThumbnailQuality);
+  const setImageWallThumbnailMaxSize = useSettingsStore((state) => state.setImageWallThumbnailMaxSize);
   const setImageRetentionDays = useSettingsStore((state) => state.setImageRetentionDays);
   const setTaskLogRetentionDays = useSettingsStore((state) => state.setTaskLogRetentionDays);
   const setSystemLogMaxMb = useSettingsStore((state) => state.setSystemLogMaxMb);
@@ -159,6 +162,39 @@ export function ImageRuntimeCard() {
               </SelectContent>
             </Select>
             <p className="text-xs text-stone-500">设置为 `url` 后，图片将保存到 `/data/日期/任务ID-序号.扩展名`；未配置外链时返回 `/api/view/data/...`，配置了外链时自动拼接完整 URL。</p>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm text-stone-700">缩略图最大边长</label>
+            <Input
+              value={String(config?.image_thumbnail_max_size ?? "")}
+              onChange={(event) => setImageThumbnailMaxSize(event.target.value)}
+              placeholder="512"
+              className="h-10 rounded-xl border-stone-200 bg-white"
+            />
+            <p className="text-xs text-stone-500">保存到 `/data/日期/*-thumb.*` 的缩略图最大宽高，范围 64-2048。</p>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm text-stone-700">缩略图质量</label>
+            <Input
+              value={String(config?.image_thumbnail_quality ?? "")}
+              onChange={(event) => setImageThumbnailQuality(event.target.value)}
+              placeholder="85"
+              className="h-10 rounded-xl border-stone-200 bg-white"
+            />
+            <p className="text-xs text-stone-500">JPEG/WEBP 使用有损质量 1-100，PNG 会映射为压缩等级。</p>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm text-stone-700">瀑布墙预览最大边长</label>
+            <Input
+              value={String(config?.image_wall_thumbnail_max_size ?? "")}
+              onChange={(event) => setImageWallThumbnailMaxSize(event.target.value)}
+              placeholder="960"
+              className="h-10 rounded-xl border-stone-200 bg-white"
+            />
+            <p className="text-xs text-stone-500">保存到 `/data/日期/*-wall.*`，保持原图比例，范围 128-4096。</p>
           </div>
 
           <div className="space-y-2">

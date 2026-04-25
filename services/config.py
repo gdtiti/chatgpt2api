@@ -16,6 +16,9 @@ DEFAULT_IMAGE_FAILURE_STRATEGY = "fail"
 DEFAULT_IMAGE_RETRY_COUNT = 0
 DEFAULT_IMAGE_PARALLEL_ATTEMPTS = 1
 DEFAULT_IMAGE_RESPONSE_FORMAT = "b64_json"
+DEFAULT_IMAGE_THUMBNAIL_MAX_SIZE = 512
+DEFAULT_IMAGE_THUMBNAIL_QUALITY = 85
+DEFAULT_IMAGE_WALL_THUMBNAIL_MAX_SIZE = 960
 DEFAULT_IMAGE_RETENTION_DAYS = 7
 DEFAULT_TASK_LOG_RETENTION_DAYS = 7
 DEFAULT_SYSTEM_LOG_MAX_MB = 32
@@ -32,6 +35,9 @@ ENV_IMAGE_RETRY_COUNT = "CHATGPT2API_IMAGE_RETRY_COUNT"
 ENV_IMAGE_PARALLEL_ATTEMPTS = "CHATGPT2API_IMAGE_PARALLEL_ATTEMPTS"
 ENV_IMAGE_PLACEHOLDER_PATH = "CHATGPT2API_IMAGE_PLACEHOLDER_PATH"
 ENV_IMAGE_RESPONSE_FORMAT = "CHATGPT2API_IMAGE_RESPONSE_FORMAT"
+ENV_IMAGE_THUMBNAIL_MAX_SIZE = "CHATGPT2API_IMAGE_THUMBNAIL_MAX_SIZE"
+ENV_IMAGE_THUMBNAIL_QUALITY = "CHATGPT2API_IMAGE_THUMBNAIL_QUALITY"
+ENV_IMAGE_WALL_THUMBNAIL_MAX_SIZE = "CHATGPT2API_IMAGE_WALL_THUMBNAIL_MAX_SIZE"
 ENV_IMAGE_RETENTION_DAYS = "CHATGPT2API_IMAGE_RETENTION_DAYS"
 ENV_TASK_LOG_RETENTION_DAYS = "CHATGPT2API_TASK_LOG_RETENTION_DAYS"
 ENV_SYSTEM_LOG_MAX_MB = "CHATGPT2API_SYSTEM_LOG_MAX_MB"
@@ -314,6 +320,39 @@ class ConfigStore:
             ENV_IMAGE_RESPONSE_FORMAT,
             DEFAULT_IMAGE_RESPONSE_FORMAT,
             {"b64_json", "url"},
+        )
+
+    @property
+    def image_thumbnail_max_size(self) -> int:
+        return _resolve_bounded_int_setting(
+            self.data,
+            "image_thumbnail_max_size",
+            ENV_IMAGE_THUMBNAIL_MAX_SIZE,
+            DEFAULT_IMAGE_THUMBNAIL_MAX_SIZE,
+            min_value=64,
+            max_value=2048,
+        )
+
+    @property
+    def image_thumbnail_quality(self) -> int:
+        return _resolve_bounded_int_setting(
+            self.data,
+            "image_thumbnail_quality",
+            ENV_IMAGE_THUMBNAIL_QUALITY,
+            DEFAULT_IMAGE_THUMBNAIL_QUALITY,
+            min_value=1,
+            max_value=100,
+        )
+
+    @property
+    def image_wall_thumbnail_max_size(self) -> int:
+        return _resolve_bounded_int_setting(
+            self.data,
+            "image_wall_thumbnail_max_size",
+            ENV_IMAGE_WALL_THUMBNAIL_MAX_SIZE,
+            DEFAULT_IMAGE_WALL_THUMBNAIL_MAX_SIZE,
+            min_value=128,
+            max_value=4096,
         )
 
     @property

@@ -11,6 +11,7 @@ from uuid import uuid4
 from services.api_key_service import AuthPrincipal
 from services.chatgpt_service import ChatGPTService
 from services.config import config
+from services.data_service import ensure_preview_image_metadata
 from utils.log import logger
 
 
@@ -130,13 +131,26 @@ def _preview_image_from_item(item: dict[str, object], index: int) -> dict[str, o
             src = result_value
     if not src:
         return None
-    return {
+    preview = {
         "id": _clean_text(item.get("id")) or f"preview-{index}",
         "src": src,
         "url": image_url or (src if _is_probable_image_url(src) and not src.startswith("data:image/") else None),
         "thumbnail_url": thumbnail_url or None,
         "markdown": markdown or None,
     }
+    for key in (
+            "relative_path",
+            "thumbnail_relative_path",
+            "wall_relative_path",
+            "file_name",
+            "thumbnail_file_name",
+            "wall_file_name",
+            "wall_url",
+    ):
+        value = _clean_text(item.get(key))
+        if value:
+            preview[key] = value
+    return ensure_preview_image_metadata(preview, base_url=config.base_url or None)
 
 
 def _extract_preview_images(result: dict[str, object] | None) -> list[dict[str, object]]:
@@ -201,6 +215,10 @@ class JobService:
         self.jobs_dir.mkdir(parents=True, exist_ok=True)
         self.job_results_dir.mkdir(parents=True, exist_ok=True)
         self.task_logs_dir.mkdir(parents=True, exist_ok=True)
+        from services.metadata_db import MetadataDatabase, metadata_db
+
+        metadata_path = self.jobs_dir.parent / "metadata.sqlite3"
+        self.metadata_db = metadata_db if metadata_db.path == metadata_path else MetadataDatabase(metadata_path)
         self._lock = Lock()
         self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="async-job")
 
@@ -255,6 +273,19 @@ class JobService:
             "error": job.get("error"),
         }
 
+    @staticmethod
+    def _ensure_public_job_previews(public_job: dict[str, object]) -> dict[str, object]:
+        preview_images = public_job.get("preview_images")
+        if not isinstance(preview_images, list):
+            return public_job
+        ensured = [
+            ensure_preview_image_metadata(item, base_url=config.base_url or None) if isinstance(item, dict) else item
+            for item in preview_images
+        ]
+        next_job = dict(public_job)
+        next_job["preview_images"] = ensured
+        return next_job
+
     def _load_job(self, job_id: str) -> dict[str, object] | None:
         return self._read_json(self._job_file(job_id))
 
@@ -283,8 +314,6 @@ class JobService:
         return job if str(job.get("api_key_id") or "") == principal.key_id else None
 
     def submit_job(self, job_type: str, payload: dict[str, object], principal: AuthPrincipal) -> dict[str, object]:
-        from services.metadata_db import metadata_db
-
         now = _utc_now()
         model = _clean_text(payload.get("model")) or ("gpt-image-2" if job_type.startswith("images.") else "auto")
         job = {
@@ -314,8 +343,8 @@ class JobService:
                 "log_path": job["log_path"],
             })
         public_job = self._public_job(job)
-        metadata_db.record_task_log(str(job["id"]), str(job["log_path"]))
-        metadata_db.record_async_job(public_job, payload=dict(payload or {}))
+        self.metadata_db.record_task_log(str(job["id"]), str(job["log_path"]))
+        self.metadata_db.record_async_job(public_job, payload=dict(payload or {}))
         self._executor.submit(self._run_job, str(job["id"]))
         return public_job
 
@@ -324,10 +353,37 @@ class JobService:
             principal: AuthPrincipal,
             *,
             limit: int = 50,
+            offset: int = 0,
+            status: str | None = None,
+            job_type: str | None = None,
+            query: str | None = None,
+            sort: str | None = None,
+            order: str | None = None,
+    ) -> tuple[list[dict[str, object]], int]:
+        self._backfill_metadata_if_empty(principal)
+        items, total = self.metadata_db.list_async_jobs(
+            is_admin=principal.is_admin,
+            api_key_id=principal.key_id,
+            limit=limit,
+            offset=offset,
+            status=status,
+            job_type=job_type,
+            query=query,
+            sort=sort,
+            order=order,
+        )
+        ensured_items = [self._ensure_public_job_previews(item) for item in items]
+        return ensured_items, total
+
+    def _scan_job_files(
+            self,
+            principal: AuthPrincipal,
+            *,
+            limit: int = 200,
             status: str | None = None,
             job_type: str | None = None,
     ) -> list[dict[str, object]]:
-        limit_value = max(1, min(limit, 200))
+        limit_value = max(1, min(limit, 500))
         status_filter = _clean_text(status)
         type_filter = _clean_text(job_type)
         jobs: list[dict[str, object]] = []
@@ -340,28 +396,103 @@ class JobService:
                 continue
             if type_filter and _clean_text(job.get("type")) != type_filter:
                 continue
-            jobs.append(self._public_job(job, self._load_result(str(job.get("id") or ""))))
+            jobs.append(self._ensure_public_job_previews(self._public_job(job, self._load_result(str(job.get("id") or "")))))
             if len(jobs) >= limit_value:
                 break
         return jobs
 
+    def _backfill_metadata_if_empty(self, principal: AuthPrincipal) -> None:
+        existing, total = self.metadata_db.list_async_jobs(
+            is_admin=principal.is_admin,
+            api_key_id=principal.key_id,
+            limit=1,
+            offset=0,
+        )
+        if total > 0 or existing:
+            return
+        for public_job in self._scan_job_files(principal, limit=500):
+            job = self._load_job(str(public_job.get("id") or ""))
+            result = self._load_result(str(public_job.get("id") or ""))
+            self.metadata_db.record_async_job(
+                public_job,
+                payload=dict((job or {}).get("payload") or {}),
+                preview_images=list(public_job.get("preview_images") or []),
+                result_path=str(self._result_file(str(public_job.get("id") or ""))) if result is not None else None,
+            )
+
     def summarize_jobs(self, principal: AuthPrincipal) -> dict[str, int]:
-        summary = {
-            "total": 0,
-            "queued": 0,
-            "running": 0,
-            "succeeded": 0,
-            "failed": 0,
-        }
-        for path in self.jobs_dir.glob("*.json"):
-            job = self._assert_job_access(self._read_json(path), principal)
-            if job is None:
-                continue
-            summary["total"] += 1
-            status = _clean_text(job.get("status"))
-            if status in summary:
-                summary[status] += 1
-        return summary
+        self._backfill_metadata_if_empty(principal)
+        return self.metadata_db.summarize_async_jobs(is_admin=principal.is_admin, api_key_id=principal.key_id)
+
+    def list_gallery_jobs(
+            self,
+            principal: AuthPrincipal,
+            *,
+            limit: int = 20,
+            offset: int = 0,
+            query: str | None = None,
+            sort: str | None = None,
+            order: str | None = None,
+    ) -> tuple[list[dict[str, object]], int]:
+        self._backfill_metadata_if_empty(principal)
+        items, total = self.metadata_db.list_gallery_jobs(
+            is_admin=principal.is_admin,
+            api_key_id=principal.key_id,
+            limit=limit,
+            offset=offset,
+            query=query,
+            sort=sort,
+            order=order,
+        )
+        ensured_items = [self._ensure_public_job_previews(item) for item in items]
+        return ensured_items, total
+
+    def count_gallery_jobs(self, principal: AuthPrincipal) -> int:
+        _, total = self.list_gallery_jobs(principal, limit=1, offset=0)
+        return total
+
+    def list_waterfall_images(
+            self,
+            principal: AuthPrincipal,
+            *,
+            limit: int = 40,
+            offset: int = 0,
+            query: str | None = None,
+            include_blocked: bool = False,
+    ) -> tuple[list[dict[str, object]], int]:
+        self._backfill_metadata_if_empty(principal)
+        items, total = self.metadata_db.list_waterfall_images(
+            is_admin=principal.is_admin,
+            api_key_id=principal.key_id,
+            limit=limit,
+            offset=offset,
+            query=query,
+            include_blocked=include_blocked,
+        )
+        ensured_items: list[dict[str, object]] = []
+        for item in items:
+            ensured = ensure_preview_image_metadata(dict(item), base_url=config.base_url or None)
+            if ensured.get("wall_url"):
+                ensured["src"] = ensured["wall_url"]
+            ensured_items.append(ensured)
+        return ensured_items, total
+
+    def update_gallery_image_state(
+            self,
+            job_id: str,
+            image_index: int,
+            *,
+            is_recommended: bool | None = None,
+            is_pinned: bool | None = None,
+            is_blocked: bool | None = None,
+    ) -> dict[str, object] | None:
+        return self.metadata_db.update_gallery_image_state(
+            job_id=job_id,
+            image_index=image_index,
+            is_recommended=is_recommended,
+            is_pinned=is_pinned,
+            is_blocked=is_blocked,
+        )
 
     def get_job(self, job_id: str, principal: AuthPrincipal) -> dict[str, object] | None:
         job = self._assert_job_access(self._load_job(job_id), principal)
@@ -434,14 +565,12 @@ class JobService:
         raise ValueError(f"unsupported async job type: {job_type}")
 
     def _run_job(self, job_id: str) -> None:
-        from services.metadata_db import metadata_db
-
         running = self._update_job(job_id, status="running", error=None)
         if running is None:
             return
         log_path = Path(str(running.get("log_path") or self._task_log_file(running.get("created_at"), job_id)))
-        metadata_db.record_task_log(job_id, str(log_path))
-        metadata_db.record_async_job(self._public_job(running), payload=dict(running.get("payload") or {}))
+        self.metadata_db.record_task_log(job_id, str(log_path))
+        self.metadata_db.record_async_job(self._public_job(running), payload=dict(running.get("payload") or {}))
         with logger.task_context(log_path):
             logger.info({
                 "event": "async_job_started",
@@ -462,7 +591,7 @@ class JobService:
                     "result_count": _count_result_items(result_payload),
                 })
                 if succeeded is not None:
-                    metadata_db.record_async_job(
+                    self.metadata_db.record_async_job(
                         self._public_job(succeeded, result_payload),
                         payload=dict(succeeded.get("payload") or {}),
                         preview_images=_extract_preview_images(result_payload),
@@ -480,7 +609,7 @@ class JobService:
                     "error": str(exc),
                 })
                 if failed is not None:
-                    metadata_db.record_async_job(
+                    self.metadata_db.record_async_job(
                         self._public_job(failed),
                         payload=dict(failed.get("payload") or {}),
                     )

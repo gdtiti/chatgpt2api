@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
 import {
   CheckCircle2,
+  ChevronLeft,
   ChevronRight,
   Clock3,
   Copy,
@@ -11,6 +12,7 @@ import {
   ListFilter,
   LoaderCircle,
   RefreshCw,
+  Search,
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -20,6 +22,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   fetchAsyncJob,
@@ -200,6 +203,11 @@ export default function JobsPage() {
   const [statusFilter, setStatusFilter] = useState<AsyncJobStatus | "all">("all");
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [limit, setLimit] = useState("50");
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [queryInput, setQueryInput] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [sortOption, setSortOption] = useState("updated_at:desc");
   const [isLoading, setIsLoading] = useState(true);
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailJob, setDetailJob] = useState<AsyncJobItem | null>(null);
@@ -217,6 +225,9 @@ export default function JobsPage() {
     [jobs],
   );
   const detailImages = useMemo(() => extractImageSources(detailResult, detailJob), [detailJob, detailResult]);
+  const pageSize = Math.max(1, Number(limit) || 50);
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const [sort, order] = sortOption.split(":");
 
   const loadJobs = async (silent = false) => {
     if (!silent) {
@@ -224,11 +235,16 @@ export default function JobsPage() {
     }
     try {
       const data = await fetchAsyncJobs({
-        limit: Number(limit) || 50,
+        limit: pageSize,
+        offset: (page - 1) * pageSize,
         status: statusFilter,
         type: typeFilter,
+        query: searchQuery,
+        sort,
+        order,
       });
       setJobs(data.items);
+      setTotal(data.total);
       setSummary(data.summary);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "加载任务列表失败");
@@ -252,7 +268,7 @@ export default function JobsPage() {
       return;
     }
     void loadJobs();
-  }, [limit, statusFilter, typeFilter]);
+  }, [limit, page, statusFilter, typeFilter, searchQuery, sortOption]);
 
   useEffect(() => {
     if (!hasActiveJobs) {
@@ -262,7 +278,11 @@ export default function JobsPage() {
       void loadJobs(true);
     }, 3000);
     return () => window.clearInterval(timer);
-  }, [hasActiveJobs, limit, statusFilter, typeFilter]);
+  }, [hasActiveJobs, limit, page, statusFilter, typeFilter, searchQuery, sortOption]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [limit, statusFilter, typeFilter, searchQuery, sortOption]);
 
   const handleOpenDetail = async (job: AsyncJobItem) => {
     setDetailOpen(true);
@@ -374,6 +394,42 @@ export default function JobsPage() {
                   </SelectContent>
                 </Select>
 
+                <div className="flex items-center gap-2">
+                  <Input
+                    value={queryInput}
+                    onChange={(event) => setQueryInput(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        setSearchQuery(queryInput.trim());
+                      }
+                    }}
+                    placeholder="搜索任务、模型、提示词"
+                    className="h-10 w-[220px] rounded-xl border-stone-200 bg-white"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-10 rounded-xl border-stone-200 bg-white px-3 text-stone-700"
+                    onClick={() => setSearchQuery(queryInput.trim())}
+                  >
+                    <Search className="size-4" />
+                    搜索
+                  </Button>
+                </div>
+
+                <Select value={sortOption} onValueChange={setSortOption}>
+                  <SelectTrigger className="h-10 w-[150px] rounded-xl border-stone-200 bg-white">
+                    <SelectValue placeholder="排序" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="updated_at:desc">最新更新</SelectItem>
+                    <SelectItem value="created_at:desc">最新创建</SelectItem>
+                    <SelectItem value="updated_at:asc">最早更新</SelectItem>
+                    <SelectItem value="status:asc">状态排序</SelectItem>
+                    <SelectItem value="type:asc">类型排序</SelectItem>
+                  </SelectContent>
+                </Select>
+
                 <Select value={limit} onValueChange={setLimit}>
                   <SelectTrigger className="h-10 w-[120px] rounded-xl border-stone-200 bg-white">
                     <SelectValue placeholder="数量" />
@@ -398,6 +454,34 @@ export default function JobsPage() {
                 {isLoading ? <LoaderCircle className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
                 刷新任务
               </Button>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-stone-500">
+              <div>
+                共 {total} 条，当前第 {page} / {pageCount} 页
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-9 rounded-xl border-stone-200 bg-white px-3 text-stone-700"
+                  disabled={isLoading || page <= 1}
+                  onClick={() => setPage((value) => Math.max(1, value - 1))}
+                >
+                  <ChevronLeft className="size-4" />
+                  上一页
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-9 rounded-xl border-stone-200 bg-white px-3 text-stone-700"
+                  disabled={isLoading || page >= pageCount}
+                  onClick={() => setPage((value) => Math.min(pageCount, value + 1))}
+                >
+                  下一页
+                  <ChevronRight className="size-4" />
+                </Button>
+              </div>
             </div>
 
             <div className="overflow-x-auto">

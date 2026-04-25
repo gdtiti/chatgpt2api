@@ -66,6 +66,9 @@ CHATGPT2API_IMAGE_RETRY_COUNT
 CHATGPT2API_IMAGE_PARALLEL_ATTEMPTS
 CHATGPT2API_IMAGE_PLACEHOLDER_PATH
 CHATGPT2API_IMAGE_RESPONSE_FORMAT
+CHATGPT2API_IMAGE_THUMBNAIL_MAX_SIZE
+CHATGPT2API_IMAGE_THUMBNAIL_QUALITY
+CHATGPT2API_IMAGE_WALL_THUMBNAIL_MAX_SIZE
 CHATGPT2API_IMAGE_RETENTION_DAYS
 CHATGPT2API_TASK_LOG_RETENTION_DAYS
 CHATGPT2API_DATA_CLEANUP_ENABLED
@@ -114,7 +117,7 @@ export default function DocsPage() {
               <h2 className="text-lg font-semibold tracking-tight">图片参数说明</h2>
               <p className="text-sm text-stone-500">
                 当前已支持 `size=1:1/16:9/9:16/4:3/3:4`，网页也可填写自定义尺寸文本，例如 `1024x1024` 或 `21:9`。图片返回格式支持
-                `b64_json` 和 `url`；未配置外链地址时，`url` 会返回相对路径 `/api/view/data/...`。
+                `b64_json` 和 `url`；未配置外链地址时，`url` 会返回相对路径 `/api/view/data/...`。缩略图与瀑布墙预览图都会保持原图比例，尺寸和质量可在设置页或环境变量中配置。
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -198,7 +201,7 @@ export default function DocsPage() {
           <div className="space-y-1">
             <h2 className="text-lg font-semibold tracking-tight">图片文件与清理</h2>
             <p className="text-sm text-stone-500">
-              图片会保存到 `data/YYYY-MM-DD/task-id-index.ext`。可通过设置页配置图片保留天数、任务日志保留天数、系统日志体积和自动清理间隔。
+              图片会保存到 `data/YYYY-MM-DD/task-id-index.ext`，缩略图会保存为 `task-id-index-thumb.ext`，瀑布墙预览会保存为 `task-id-index-wall.ext`。可通过设置页配置缩略图尺寸、质量、瀑布墙预览尺寸、图片保留天数、任务日志保留天数、系统日志体积和自动清理间隔。
             </p>
           </div>
           <CodeBlock value={imageGetExample} />

@@ -233,6 +233,9 @@ class ConfigLoadingTests(unittest.TestCase):
                     {
                         "auth-key": "file-auth",
                         "image_response_format": "b64_json",
+                        "image_thumbnail_max_size": 512,
+                        "image_thumbnail_quality": 85,
+                        "image_wall_thumbnail_max_size": 960,
                         "image_retention_days": 7,
                         "task_log_retention_days": 9,
                         "system_log_max_mb": 32,
@@ -246,6 +249,9 @@ class ConfigLoadingTests(unittest.TestCase):
             module = self.config_module
             env_names = {
                 "CHATGPT2API_IMAGE_RESPONSE_FORMAT": "url",
+                "CHATGPT2API_IMAGE_THUMBNAIL_MAX_SIZE": "320",
+                "CHATGPT2API_IMAGE_THUMBNAIL_QUALITY": "72",
+                "CHATGPT2API_IMAGE_WALL_THUMBNAIL_MAX_SIZE": "1280",
                 "CHATGPT2API_IMAGE_RETENTION_DAYS": "3",
                 "CHATGPT2API_TASK_LOG_RETENTION_DAYS": "5",
                 "CHATGPT2API_SYSTEM_LOG_MAX_MB": "64",
@@ -260,6 +266,9 @@ class ConfigLoadingTests(unittest.TestCase):
                 store = module.ConfigStore(config_file)
 
                 self.assertEqual(store.image_response_format, "url")
+                self.assertEqual(store.image_thumbnail_max_size, 320)
+                self.assertEqual(store.image_thumbnail_quality, 72)
+                self.assertEqual(store.image_wall_thumbnail_max_size, 1280)
                 self.assertEqual(store.image_retention_days, 3)
                 self.assertEqual(store.task_log_retention_days, 5)
                 self.assertEqual(store.system_log_max_mb, 64)

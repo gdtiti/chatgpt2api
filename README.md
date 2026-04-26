@@ -69,7 +69,8 @@ CHATGPT2API_DATA_CLEANUP_INTERVAL_MINUTES
 - `GET /v1/models` 返回 `gpt-image-2`、`codex-gpt-image-2`、`auto`、`gpt-5`、`gpt-5-1`、`gpt-5-2`、`gpt-5-3`、`gpt-5-3-mini`、
   `gpt-5-mini`
 - 支持通过 `n` 返回多张生成结果
-- 图片生成与编辑支持 `size=1:1/16:9/9:16/4:3/3:4`
+- 图片生成与编辑支持 `size=1:1/16:9/9:16/4:3/3:4`；文生图额外支持合法像素尺寸，例如 `1248x1248`、`2560x1440`
+- 图片生成支持 `quality=low/medium/high`，并兼容 `standard -> medium`、`hd -> high`
 - 图片生成支持后台配置失败策略：`fail / retry / placeholder`
 - 图片生成支持后台配置并发尝试数；单次请求可并发多个上游尝试并返回首个成功结果
 - URL 返回模式会保存原图、小缩略图与瀑布墙预览图，缩略图保持原图比例，尺寸和质量可在后台或环境变量中配置
@@ -167,7 +168,7 @@ curl http://localhost:8000/v1/models \
 
 返回能力化模型目录，会在 `/v1/models` 的基础上补充每个模型可用的接口能力。
 
-图片模型还会额外带出 `image_options`，用于表达当前支持的 `size_choices`、默认尺寸和参考图能力。
+图片模型还会额外带出 `image_options`，用于表达当前支持的 `size_choices`、`quality_choices`、分辨率预设、默认尺寸和参考图能力。
 
 </details>
 
@@ -200,7 +201,7 @@ curl http://localhost:8000/api/async/jobs \
   }'
 ```
 
-图片类异步任务的 `payload` 也支持 `size`，例如 `4:3` 或 `3:4`。任务运行中可订阅 `GET /api/async/jobs/{job_id}/events`。服务会持续发送 `event: ping` 保持 SSE 连接，任务完成后推送 `event: result` 或 `event: error`。
+图片类异步任务的 `payload` 也支持 `size` 和 `quality`，例如 `{"size":"1440x1072","quality":"high"}`。任务运行中可订阅 `GET /api/async/jobs/{job_id}/events`。服务会持续发送 `event: ping` 保持 SSE 连接，任务完成后推送 `event: result` 或 `event: error`。
 
 </details>
 
@@ -218,7 +219,8 @@ curl http://localhost:8000/v1/images/generations \
     "model": "gpt-image-2",
     "prompt": "一只漂浮在太空里的猫",
     "n": 1,
-    "size": "4:3",
+    "size": "1440x1072",
+    "quality": "high",
     "response_format": "b64_json"
   }'
 ```
@@ -232,7 +234,8 @@ curl http://localhost:8000/v1/images/generations \
 | `model`           | 图片模型，当前可用值以 `/v1/models` 返回结果为准，推荐使用 `gpt-image-2` |
 | `prompt`          | 图片生成提示词                                            |
 | `n`               | 生成数量，当前后端限制为 `1-4`                                 |
-| `size`            | 可选尺寸/比例，支持 `1:1`、`16:9`、`9:16`、`4:3`、`3:4`         |
+| `size`            | 可选尺寸/比例，支持 `1:1`、`16:9`、`9:16`、`4:3`、`3:4`，也支持合法像素尺寸如 `1248x1248` |
+| `quality`         | 可选生成质量，支持 `low`、`medium`、`high`，兼容 `standard` 和 `hd` |
 | `response_format` | 当前请求模型中包含该字段，默认值为 `b64_json`                       |
 
 <br>

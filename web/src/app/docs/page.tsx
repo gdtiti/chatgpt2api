@@ -48,7 +48,8 @@ const imageExample = `curl http://localhost:8000/v1/images/generations \\
   -d '{
     "model": "gpt-image-2",
     "prompt": "一张极简海报风格的山野露营插画",
-    "size": "4:3",
+    "size": "1440x1072",
+    "quality": "high",
     "n": 1,
     "response_format": "url"
   }'`;
@@ -92,11 +93,11 @@ export default function DocsPage() {
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-semibold tracking-tight">API 使用说明</h1>
           <Badge variant="info">OpenAI 兼容图片接口</Badge>
-          <Badge variant="warning">quality 当前未支持</Badge>
+          <Badge variant="success">quality 已支持</Badge>
         </div>
         <p className="max-w-[900px] text-sm leading-7 text-stone-500">
-          页面内汇总了下游接入时最常用的鉴权方式、模型接口、异步任务接口和图片返回策略。网页画图页现已固定走异步 SSE；质量
-          `quality` 当前仍未进入后端契约。
+          页面内汇总了下游接入时最常用的鉴权方式、模型接口、异步任务接口和图片返回策略。网页画图页现已固定走异步 SSE；文生图支持
+          `size`、分辨率预设和 `quality=low/medium/high`。
         </p>
       </div>
 
@@ -116,7 +117,8 @@ export default function DocsPage() {
             <div className="space-y-1">
               <h2 className="text-lg font-semibold tracking-tight">图片参数说明</h2>
               <p className="text-sm text-stone-500">
-                当前已支持 `size=1:1/16:9/9:16/4:3/3:4`，网页也可填写自定义尺寸文本，例如 `1024x1024` 或 `21:9`。图片返回格式支持
+                当前已支持 `size=1:1/16:9/9:16/4:3/3:4`，网页也可填写自定义尺寸文本，例如 `1248x1248` 或 `21:9`。文生图会校验像素尺寸并透传
+                `quality=low/medium/high`。图片返回格式支持
                 `b64_json` 和 `url`；未配置外链地址时，`url` 会返回相对路径 `/api/view/data/...`。缩略图与瀑布墙预览图都会保持原图比例，尺寸和质量可在设置页或环境变量中配置。
               </p>
             </div>

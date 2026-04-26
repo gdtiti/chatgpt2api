@@ -84,7 +84,7 @@ class ImageFallbackTests(unittest.TestCase):
         call_order: list[int] = []
         lock = threading.Lock()
 
-        def operation(_prompt, _model, _size, _response_format, _base_url, _request_id, slot_index):
+        def operation(_prompt, _model, _size, _response_format, _base_url, _request_id, slot_index, _quality=None):
             with lock:
                 call_order.append(slot_index)
             if slot_index == 1:
@@ -117,7 +117,7 @@ class ImageFallbackTests(unittest.TestCase):
         slow_completed = threading.Event()
         release_slow = threading.Event()
 
-        def operation(_prompt, _model, _size, _response_format, _base_url, _request_id, slot_index):
+        def operation(_prompt, _model, _size, _response_format, _base_url, _request_id, slot_index, _quality=None):
             if slot_index == 1:
                 slow_started.set()
                 release_slow.wait(timeout=10.0)
@@ -156,7 +156,7 @@ class ImageFallbackTests(unittest.TestCase):
         )
         service = ChatGPTService(_FakeAccountService())
 
-        def operation(prompt, _model, _size, response_format, base_url, request_id, image_index):
+        def operation(prompt, _model, _size, response_format, base_url, request_id, image_index, _quality=None):
             return service._format_image_result(
                 {
                     "created": 1,
@@ -248,7 +248,7 @@ class ImageFallbackTests(unittest.TestCase):
         )
         service = ChatGPTService(_FakeAccountService())
 
-        def operation(prompt, _model, _size, response_format, base_url, request_id, image_index):
+        def operation(prompt, _model, _size, response_format, base_url, request_id, image_index, _quality=None):
             return service._format_image_result(
                 {
                     "created": 1,

@@ -3,6 +3,7 @@
 import localforage from "localforage";
 
 import type { ImageConversationMode, ImageRequestMode } from "@/store/image-conversations";
+import type { ImageQuality, ImageResolutionTier } from "@/lib/api";
 
 export type ImagePreferences = {
   imageModel: string;
@@ -10,6 +11,8 @@ export type ImagePreferences = {
   imageCount: string;
   imageSizePreset: string;
   customImageSize: string;
+  imageResolutionTier: ImageResolutionTier;
+  imageQuality: ImageQuality;
   imageMode: ImageConversationMode;
 };
 
@@ -19,6 +22,8 @@ export const DEFAULT_IMAGE_PREFERENCES: ImagePreferences = {
   imageCount: "1",
   imageSizePreset: "1:1",
   customImageSize: "",
+  imageResolutionTier: "sd",
+  imageQuality: "high",
   imageMode: "generate",
 };
 
@@ -41,6 +46,12 @@ function normalizePreferences(value: unknown): ImagePreferences {
     imageSizePreset:
       String(candidate.imageSizePreset || DEFAULT_IMAGE_PREFERENCES.imageSizePreset).trim() || "1:1",
     customImageSize: String(candidate.customImageSize || "").trim(),
+    imageResolutionTier:
+      candidate.imageResolutionTier === "2k" || candidate.imageResolutionTier === "4k" ? candidate.imageResolutionTier : "sd",
+    imageQuality:
+      candidate.imageQuality === "low" || candidate.imageQuality === "medium" || candidate.imageQuality === "high"
+        ? candidate.imageQuality
+        : "high",
     imageMode: candidate.imageMode === "edit" ? "edit" : "generate",
   };
 }

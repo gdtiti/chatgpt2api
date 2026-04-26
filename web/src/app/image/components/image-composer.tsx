@@ -4,7 +4,6 @@ import { ArrowUp, ImagePlus, LoaderCircle, Settings2, X } from "lucide-react";
 import { useMemo, useState, type ClipboardEvent, type RefObject } from "react";
 
 import { ImageLightbox } from "@/components/image-lightbox";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -17,7 +16,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { IMAGE_SIZE_OPTIONS } from "@/lib/api";
+import { IMAGE_QUALITY_OPTIONS, IMAGE_RESOLUTION_TIERS, IMAGE_SIZE_OPTIONS } from "@/lib/api";
+import type { ImageQuality, ImageResolutionTier } from "@/lib/api";
 import type { ImageConversationMode, ImageRequestMode } from "@/store/image-conversations";
 import { cn } from "@/lib/utils";
 
@@ -34,6 +34,8 @@ type ImageComposerProps = {
   imageSize: string;
   imageSizePreset: string;
   customImageSize: string;
+  imageResolutionTier: ImageResolutionTier;
+  imageQuality: ImageQuality;
   availableQuota: string;
   requestQuota?: string | null;
   isTestMode?: boolean;
@@ -48,6 +50,8 @@ type ImageComposerProps = {
   onImageCountChange: (value: string) => void;
   onImageSizePresetChange: (value: string) => void;
   onCustomImageSizeChange: (value: string) => void;
+  onImageResolutionTierChange: (value: ImageResolutionTier) => void;
+  onImageQualityChange: (value: ImageQuality) => void;
   onSubmit: () => void | Promise<void>;
   onPickReferenceImage: () => void;
   onReferenceImageChange: (files: File[]) => void | Promise<void>;
@@ -65,6 +69,8 @@ export function ImageComposer({
   imageSize,
   imageSizePreset,
   customImageSize,
+  imageResolutionTier,
+  imageQuality,
   availableQuota,
   requestQuota,
   isTestMode = false,
@@ -79,6 +85,8 @@ export function ImageComposer({
   onImageCountChange,
   onImageSizePresetChange,
   onCustomImageSizeChange,
+  onImageResolutionTierChange,
+  onImageQualityChange,
   onSubmit,
   onPickReferenceImage,
   onReferenceImageChange,
@@ -91,6 +99,8 @@ export function ImageComposer({
   const [draftImageCount, setDraftImageCount] = useState(imageCount);
   const [draftImageSizePreset, setDraftImageSizePreset] = useState(imageSizePreset);
   const [draftCustomImageSize, setDraftCustomImageSize] = useState(customImageSize);
+  const [draftImageResolutionTier, setDraftImageResolutionTier] = useState<ImageResolutionTier>(imageResolutionTier);
+  const [draftImageQuality, setDraftImageQuality] = useState<ImageQuality>(imageQuality);
   const lightboxImages = useMemo(
     () => referenceImages.map((image, index) => ({ id: `${image.name}-${index}`, src: image.dataUrl })),
     [referenceImages],
@@ -111,6 +121,8 @@ export function ImageComposer({
     setDraftImageCount(imageCount);
     setDraftImageSizePreset(imageSizePreset);
     setDraftCustomImageSize(customImageSize);
+    setDraftImageResolutionTier(imageResolutionTier);
+    setDraftImageQuality(imageQuality);
     setSettingsOpen(true);
   };
 
@@ -119,6 +131,8 @@ export function ImageComposer({
     onImageCountChange(draftImageCount);
     onImageSizePresetChange(draftImageSizePreset);
     onCustomImageSizeChange(draftCustomImageSize);
+    onImageResolutionTierChange(draftImageResolutionTier);
+    onImageQualityChange(draftImageQuality);
     setSettingsOpen(false);
   };
 
@@ -304,7 +318,7 @@ export function ImageComposer({
                 <Input
                   type="number"
                   min="1"
-                  max="10"
+                  max="4"
                   step="1"
                   value={draftImageCount}
                   onChange={(event) => setDraftImageCount(event.target.value)}
@@ -342,14 +356,36 @@ export function ImageComposer({
                 </div>
               ) : null}
 
-              <div className="space-y-2 md:col-span-2">
+              <div className="space-y-2">
+                <div className="text-sm font-medium text-stone-700">分辨率</div>
+                <Select value={draftImageResolutionTier} onValueChange={(value) => setDraftImageResolutionTier(value as ImageResolutionTier)}>
+                  <SelectTrigger className="h-11 rounded-xl border-stone-200 bg-white">
+                    <SelectValue placeholder="选择分辨率" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {IMAGE_RESOLUTION_TIERS.map((option) => (
+                      <SelectItem key={option} value={option}>
+                        {option.toUpperCase()}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
                 <div className="text-sm font-medium text-stone-700">质量</div>
-                <div className="flex items-center gap-2 rounded-xl border border-dashed border-stone-200 bg-stone-50 px-4 py-3">
-                  <Badge variant="outline" className="rounded-full border-stone-200 bg-white text-stone-500">
-                    暂未支持
-                  </Badge>
-                  <span className="text-sm text-stone-500">后端当前没有 `quality` 契约，界面仅保留占位说明。</span>
-                </div>
+                <Select value={draftImageQuality} onValueChange={(value) => setDraftImageQuality(value as ImageQuality)}>
+                  <SelectTrigger className="h-11 rounded-xl border-stone-200 bg-white">
+                    <SelectValue placeholder="选择质量" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {IMAGE_QUALITY_OPTIONS.map((option) => (
+                      <SelectItem key={option} value={option}>
+                        {option}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
 

@@ -41,6 +41,7 @@ class _CaptureChatGPTService:
         response_format: str = "b64_json",
         base_url: str | None = None,
         request_id: str | None = None,
+        quality: str | None = None,
     ) -> dict[str, object]:
         self.last_generation = {
             "prompt": prompt,
@@ -50,6 +51,7 @@ class _CaptureChatGPTService:
             "response_format": response_format,
             "base_url": base_url,
             "request_id": request_id,
+            "quality": quality,
         }
         return {"created": 1, "data": [{"b64_json": "ZmFrZQ==", "revised_prompt": prompt}]}
 
@@ -106,6 +108,72 @@ class ImageRequestOptionTests(unittest.TestCase):
                 )
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(fake_chatgpt_service.last_generation["size"], "3:4")
+            finally:
+                support_module.api_key_service = old_support_service
+                app_module.api_key_service = old_app_service
+                job_service.shutdown(wait=False)
+
+    def test_v1_image_generation_passes_quality_and_pixel_size(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            api_key_service = APIKeyService(Path(tmp_dir) / "api_keys.json", admin_key_provider=lambda: "chatgpt2api")
+            client_key = api_key_service.create_key(name="image-client", allowed_models=["gpt-image-2"])["plain_text"]
+            fake_chatgpt_service = _CaptureChatGPTService()
+            job_service = JobService(Path(tmp_dir) / "jobs", Path(tmp_dir) / "job_results", fake_chatgpt_service, max_workers=1)
+
+            old_support_service = support_module.api_key_service
+            old_app_service = app_module.api_key_service
+            try:
+                support_module.api_key_service = api_key_service
+                app_module.api_key_service = api_key_service
+                client = TestClient(create_app(chatgpt_service=fake_chatgpt_service, job_service=job_service))
+
+                response = client.post(
+                    "/v1/images/generations",
+                    headers={"Authorization": f"Bearer {client_key}"},
+                    json={
+                        "model": "gpt-image-2",
+                        "prompt": "make image",
+                        "n": 1,
+                        "size": "1536x1024",
+                        "quality": "high",
+                        "response_format": "b64_json",
+                    },
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(fake_chatgpt_service.last_generation["size"], "1536x1024")
+                self.assertEqual(fake_chatgpt_service.last_generation["quality"], "high")
+            finally:
+                support_module.api_key_service = old_support_service
+                app_module.api_key_service = old_app_service
+                job_service.shutdown(wait=False)
+
+    def test_v1_image_generation_rejects_invalid_pixel_size(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            api_key_service = APIKeyService(Path(tmp_dir) / "api_keys.json", admin_key_provider=lambda: "chatgpt2api")
+            client_key = api_key_service.create_key(name="image-client", allowed_models=["gpt-image-2"])["plain_text"]
+            fake_chatgpt_service = _CaptureChatGPTService()
+            job_service = JobService(Path(tmp_dir) / "jobs", Path(tmp_dir) / "job_results", fake_chatgpt_service, max_workers=1)
+
+            old_support_service = support_module.api_key_service
+            old_app_service = app_module.api_key_service
+            try:
+                support_module.api_key_service = api_key_service
+                app_module.api_key_service = api_key_service
+                client = TestClient(create_app(chatgpt_service=fake_chatgpt_service, job_service=job_service))
+
+                response = client.post(
+                    "/v1/images/generations",
+                    headers={"Authorization": f"Bearer {client_key}"},
+                    json={
+                        "model": "gpt-image-2",
+                        "prompt": "make image",
+                        "n": 1,
+                        "size": "1000x1000",
+                        "response_format": "b64_json",
+                    },
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("size", str(response.json()["detail"]).lower())
             finally:
                 support_module.api_key_service = old_support_service
                 app_module.api_key_service = old_app_service

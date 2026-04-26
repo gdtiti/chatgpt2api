@@ -18,6 +18,7 @@ class _URLImageResponseService(ChatGPTService):
         response_format: str | None = "b64_json",
         base_url: str | None = None,
         request_id: str | None = None,
+        quality: str | None = None,
     ) -> dict[str, object]:
         return {
             "created": 1777109592,
@@ -40,8 +41,9 @@ class _URLImageResponseService(ChatGPTService):
         response_format: str | None = "b64_json",
         base_url: str | None = None,
         request_id: str | None = None,
+        quality: str | None = None,
     ):
-        yield self.generate_with_pool(prompt, model, n, size, response_format, base_url, request_id)
+        yield self.generate_with_pool(prompt, model, n, size, response_format, base_url, request_id, quality)
 
 
 class ResponsesFormatTests(unittest.TestCase):

@@ -38,6 +38,7 @@ class _FakeChatGPTService:
         response_format: str = "b64_json",
         base_url: str | None = None,
         request_id: str | None = None,
+        quality: str | None = None,
     ):
         return {"created": 1, "data": [{"b64_json": "ZmFrZQ==", "revised_prompt": prompt}]}
 

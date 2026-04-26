@@ -85,6 +85,7 @@ class _DelayedChatGPTService:
         size: str | None = None,
         response_format: str | None = "b64_json",
         base_url: str | None = None,
+        quality: str | None = None,
     ):
         time.sleep(self.delay)
         self.last_image_generation = {
@@ -95,6 +96,7 @@ class _DelayedChatGPTService:
             "response_format": response_format,
             "base_url": base_url,
             "request_id": None,
+            "quality": quality,
         }
         yield {
             "object": "image.generation.result",
@@ -153,6 +155,7 @@ class _DelayedChatGPTService:
         response_format: str | None = "b64_json",
         base_url: str | None = None,
         request_id: str | None = None,
+        quality: str | None = None,
     ):
         time.sleep(self.delay)
         self.last_image_generation = {
@@ -163,6 +166,7 @@ class _DelayedChatGPTService:
             "response_format": response_format,
             "base_url": base_url,
             "request_id": request_id,
+            "quality": quality,
         }
         return {"created": 1, "data": [{"b64_json": "ZmFrZQ==", "revised_prompt": prompt}]}
 
@@ -525,7 +529,7 @@ class AsyncJobRouteTests(unittest.TestCase):
                 job_service.shutdown(wait=False)
                 logger.set_system_log_path(old_system_log_path)
 
-    def test_async_image_job_passes_size_option(self) -> None:
+    def test_async_image_job_passes_size_and_quality_options(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             api_key_service = APIKeyService(Path(tmp_dir) / "api_keys.json", admin_key_provider=lambda: "chatgpt2api")
             created = api_key_service.create_key(name="async-client", allowed_models=["gpt-image-2"])
@@ -557,7 +561,8 @@ class AsyncJobRouteTests(unittest.TestCase):
                             "model": "gpt-image-2",
                             "prompt": "make image",
                             "n": 1,
-                            "size": "4:3",
+                            "size": "1536x1024",
+                            "quality": "medium",
                             "response_format": "b64_json",
                         },
                     },
@@ -577,7 +582,8 @@ class AsyncJobRouteTests(unittest.TestCase):
 
                 self.assertEqual(result_response.status_code, 200)
                 self.assertIsNotNone(fake_chatgpt_service.last_image_generation)
-                self.assertEqual(fake_chatgpt_service.last_image_generation["size"], "4:3")
+                self.assertEqual(fake_chatgpt_service.last_image_generation["size"], "1536x1024")
+                self.assertEqual(fake_chatgpt_service.last_image_generation["quality"], "medium")
                 self.assertEqual(fake_chatgpt_service.last_image_generation["request_id"], job_id)
             finally:
                 support_module.api_key_service = old_support_service

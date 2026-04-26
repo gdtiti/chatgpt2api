@@ -11,6 +11,7 @@ from uuid import uuid4
 from services.api_key_service import AuthPrincipal
 from services.chatgpt_service import ChatGPTService
 from services.config import config
+from services.image_options import normalize_image_quality, normalize_image_size
 from services.data_service import ensure_preview_image_metadata
 from utils.log import logger
 
@@ -606,10 +607,11 @@ class JobService:
                 prompt,
                 _clean_text(payload.get("model")) or "gpt-image-2",
                 max(1, int(payload.get("n") or 1)),
-                _clean_text(payload.get("size")) or None,
+                normalize_image_size(payload.get("size")),
                 response_format,
                 base_url,
                 request_id=str(job.get("id") or ""),
+                quality=normalize_image_quality(payload.get("quality")),
             )
         if job_type == "images.edits":
             prompt = _clean_text(payload.get("prompt"))

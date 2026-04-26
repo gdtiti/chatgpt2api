@@ -10,8 +10,20 @@ export type AccountStatus = "正常" | "限流" | "异常" | "禁用";
 export type ImageModel = "auto" | "gpt-image-1" | "gpt-image-2" | "codex-gpt-image-2" | string;
 export type ImageSizeOption = "1:1" | "16:9" | "9:16" | "4:3" | "3:4";
 export type ImageSizeValue = string;
+export type ImageQuality = "low" | "medium" | "high";
+export type ImageResolutionTier = "sd" | "2k" | "4k";
 
 export const IMAGE_SIZE_OPTIONS: ImageSizeOption[] = ["1:1", "16:9", "9:16", "4:3", "3:4"];
+export const IMAGE_QUALITY_OPTIONS: ImageQuality[] = ["low", "medium", "high"];
+export const IMAGE_RESOLUTION_TIERS: ImageResolutionTier[] = ["sd", "2k", "4k"];
+export const IMAGE_RESOLUTION_PRESETS: Record<string, Record<ImageResolutionTier, string>> = {
+  "1:1": { sd: "1248x1248", "2k": "2048x2048", "4k": "2880x2880" },
+  "4:3": { sd: "1440x1072", "2k": "2048x1536", "4k": "3264x2448" },
+  "3:2": { sd: "1536x1024", "2k": "2160x1440", "4k": "3456x2304" },
+  "16:9": { sd: "1664x928", "2k": "2560x1440", "4k": "3840x2160" },
+  "21:9": { sd: "1904x816", "2k": "3360x1440", "4k": "3808x1632" },
+  "9:16": { sd: "928x1664", "2k": "1440x2560", "4k": "2160x3840" },
+};
 
 export type Account = {
   id: string;
@@ -105,6 +117,9 @@ export type ModelCatalogItem = {
     default_size?: string;
     response_format_choices?: string[];
     default_response_format?: string;
+    quality_choices?: string[];
+    default_quality?: string;
+    resolution_presets?: Record<string, Record<string, string>>;
     supports_custom_size?: boolean;
     supports_multiple_reference_images?: boolean;
   } | null;
@@ -310,7 +325,10 @@ export async function fetchModelCatalog() {
   return httpRequest<{ items: ModelCatalogItem[]; openai_models_endpoint: string }>("/api/catalog/models");
 }
 
-export async function generateImage(prompt: string, options?: { model?: ImageModel; size?: ImageSizeValue }) {
+export async function generateImage(
+  prompt: string,
+  options?: { model?: ImageModel; size?: ImageSizeValue; quality?: ImageQuality },
+) {
   return httpRequest<{ created: number; data: ImageResultItem[] }>(
     "/v1/images/generations",
     {
@@ -319,6 +337,7 @@ export async function generateImage(prompt: string, options?: { model?: ImageMod
         prompt,
         ...(options?.model ? { model: options.model } : {}),
         ...(options?.size ? { size: options.size } : {}),
+        ...(options?.quality ? { quality: options.quality } : {}),
         n: 1,
         response_format: "b64_json",
       },

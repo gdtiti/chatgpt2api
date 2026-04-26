@@ -12,6 +12,7 @@ from fastapi import HTTPException
 from services.account_service import AccountService
 from services.config import config
 from services.data_service import save_image_bytes
+from services.image_options import normalize_image_quality, normalize_image_size
 from services.openai_backend_api import CODEX_IMAGE_MODEL, OpenAIBackendAPI
 from utils.helper import (
     IMAGE_MODELS,
@@ -133,6 +134,7 @@ class ChatGPTService:
             base_url: str | None,
             request_id: str | None,
             image_index: int,
+            quality: str | None = None,
     ) -> dict[str, object]:
         while True:
             try:
@@ -152,6 +154,7 @@ class ChatGPTService:
                         model=model,
                         size=size,
                         response_format="b64_json",
+                        quality=quality,
                     ),
                     prompt,
                     response_format,
@@ -543,6 +546,17 @@ class ChatGPTService:
         return has_response_image_generation_tool(body) and str(body.get("model") or "").strip() == CODEX_IMAGE_MODEL
 
     @staticmethod
+    def _image_tool_option(body: dict[str, object], key: str) -> object:
+        if body.get(key) is not None:
+            return body.get(key)
+        tools = body.get("tools")
+        if isinstance(tools, list):
+            for tool in tools:
+                if isinstance(tool, dict) and str(tool.get("type") or "").strip() == "image_generation":
+                    return tool.get(key)
+        return None
+
+    @staticmethod
     def _build_image_response_output(
             prompt: str,
             image_result: dict[str, object],
@@ -581,13 +595,15 @@ class ChatGPTService:
             raise HTTPException(status_code=400, detail={"error": "input text is required"})
 
         model = str(body.get("model") or "gpt-image-2").strip() or "gpt-image-2"
+        size = normalize_image_size(self._image_tool_option(body, "size")) or "1:1"
+        quality = normalize_image_quality(self._image_tool_option(body, "quality"))
         image_infos = _extract_response_images(body.get("input"))
         try:
             if image_infos:
                 images = [(data, f"image_{idx}.png", mime) for idx, (data, mime) in enumerate(image_infos, start=1)]
                 image_result = self.edit_with_pool(prompt, images, model, 1)
             else:
-                image_result = self.generate_with_pool(prompt, model, 1, size="1:1")
+                image_result = self.generate_with_pool(prompt, model, 1, size=size, quality=quality)
         except ImageGenerationError as exc:
             raise HTTPException(status_code=502, detail={"error": str(exc)}) from exc
 
@@ -614,6 +630,8 @@ class ChatGPTService:
             raise HTTPException(status_code=400, detail={"error": "input text is required"})
 
         model = str(body.get("model") or "gpt-image-2").strip() or "gpt-image-2"
+        size = normalize_image_size(self._image_tool_option(body, "size")) or "1:1"
+        quality = normalize_image_quality(self._image_tool_option(body, "quality"))
         image_infos = _extract_response_images(body.get("input"))
         response_id = f"resp_{uuid.uuid4().hex}"
         item_id = f"ig_{uuid.uuid4().hex}"
@@ -650,7 +668,7 @@ class ChatGPTService:
                 images = [(data, f"image_{idx}.png", mime) for idx, (data, mime) in enumerate(image_infos, start=1)]
                 stream = self.stream_image_edit(prompt, images, model, 1)
             else:
-                stream = self.stream_image_generation(prompt, model, 1, size="1:1")
+                stream = self.stream_image_generation(prompt, model, 1, size=size, quality=quality)
 
             for chunk in stream:
                 data = chunk.get("data")
@@ -805,12 +823,14 @@ class ChatGPTService:
             response_format: str = "b64_json",
             base_url: str | None = None,
             images: list[str] | None = None,
+            quality: str | None = None,
     ) -> Iterator[dict[str, object]]:
         stream = self._new_backend(request_token).stream_image_chat_completions(
             prompt=prompt,
             model=model,
             size=size,
             images=images or None,
+            quality=quality,
         )
         for chunk in stream:
             created = int(chunk.get("created") or time.time()) if isinstance(chunk, dict) else int(time.time())
@@ -869,6 +889,7 @@ class ChatGPTService:
             request_id: str | None,
             slot_index: int,
             total_slots: int,
+            quality: str | None = None,
     ) -> dict[str, object]:
         logger.info({
             "event": "image_generate_slot_start",
@@ -891,6 +912,7 @@ class ChatGPTService:
                 base_url,
                 request_id,
                 slot_index,
+                quality,
             ),
         )
 
@@ -996,6 +1018,7 @@ class ChatGPTService:
             response_format: str | None = None,
             base_url: str = None,
             request_id: str | None = None,
+            quality: str | None = None,
     ):
         requested_count = max(1, int(n or 1))
         total_slots = self._image_total_slots(requested_count)
@@ -1011,6 +1034,7 @@ class ChatGPTService:
                 request_id,
                 slot_index,
                 total_slots,
+                quality,
             ),
         )
         created = None
@@ -1032,6 +1056,7 @@ class ChatGPTService:
             size: str | None = None,
             response_format: str | None = None,
             base_url: str | None = None,
+            quality: str | None = None,
     ) -> Iterator[dict[str, object]]:
         last_error = ""
         emitted = False
@@ -1070,6 +1095,7 @@ class ChatGPTService:
                             size,
                             response_format,
                             base_url,
+                            quality=quality,
                     ):
                         emitted = True
                         emitted_for_request = True
@@ -1281,6 +1307,8 @@ class ChatGPTService:
     def _create_image_chat_completion(self, body: dict[str, object]) -> dict[str, object]:
         model = str(body.get("model") or "gpt-image-2").strip() or "gpt-image-2"
         n = parse_image_count(body.get("n"))
+        size = normalize_image_size(body.get("size")) or "1:1"
+        quality = normalize_image_quality(body.get("quality"))
         prompt = extract_chat_prompt(body)
         if not prompt:
             raise HTTPException(status_code=400, detail={"error": "prompt is required"})
@@ -1291,7 +1319,7 @@ class ChatGPTService:
                 images = [(data, f"image_{idx}.png", mime) for idx, (data, mime) in enumerate(image_infos, start=1)]
                 image_result = self.edit_with_pool(prompt, images, model, n)
             else:
-                image_result = self.generate_with_pool(prompt, model, n, size="1:1")
+                image_result = self.generate_with_pool(prompt, model, n, size=size, quality=quality)
         except ImageGenerationError as exc:
             raise HTTPException(status_code=502, detail={"error": str(exc)}) from exc
 
@@ -1300,6 +1328,8 @@ class ChatGPTService:
     def _stream_image_chat_completion(self, body: dict[str, object]) -> Iterator[dict[str, object]]:
         model = str(body.get("model") or "gpt-image-2").strip() or "gpt-image-2"
         n = parse_image_count(body.get("n"))
+        size = normalize_image_size(body.get("size")) or "1:1"
+        quality = normalize_image_quality(body.get("quality"))
         if n != 1:
             result = self._create_image_chat_completion(body)
             yield from self._stream_completion_response(result)
@@ -1332,8 +1362,9 @@ class ChatGPTService:
                 stream = self._new_backend(request_token).stream_image_chat_completions(
                     prompt=prompt,
                     model=model,
-                    size="1:1",
+                    size=size,
                     images=encoded_images or None,
+                    quality=quality,
                 )
                 for chunk in stream:
                     emitted = True

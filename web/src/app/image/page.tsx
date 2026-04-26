@@ -12,9 +12,12 @@ import {
   fetchAuthSession,
   fetchAccounts,
   fetchModelCatalog,
+  IMAGE_RESOLUTION_PRESETS,
   streamAsyncJobEvents,
   type Account,
   type AuthSession,
+  type ImageQuality,
+  type ImageResolutionTier,
 } from "@/lib/api";
 import { getStoredAuthSession, setStoredAuthSession } from "@/store/auth";
 import {
@@ -295,6 +298,8 @@ export default function ImagePage() {
   const [imageSize, setImageSize] = useState("1:1");
   const [imageSizePreset, setImageSizePreset] = useState("1:1");
   const [customImageSize, setCustomImageSize] = useState("");
+  const [imageResolutionTier, setImageResolutionTier] = useState<ImageResolutionTier>("sd");
+  const [imageQuality, setImageQuality] = useState<ImageQuality>("high");
   const [imageMode, setImageMode] = useState<ImageConversationMode>("generate");
   const [referenceImageFiles, setReferenceImageFiles] = useState<File[]>([]);
   const [referenceImages, setReferenceImages] = useState<StoredReferenceImage[]>([]);
@@ -308,10 +313,15 @@ export default function ImagePage() {
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState(0);
 
-  const parsedCount = useMemo(() => Math.max(1, Math.min(10, Number(imageCount) || 1)), [imageCount]);
+  const parsedCount = useMemo(() => Math.max(1, Math.min(4, Number(imageCount) || 1)), [imageCount]);
   const resolvedImageSize = useMemo(
-    () => (imageSizePreset === CUSTOM_SIZE_VALUE ? customImageSize.trim() : imageSizePreset),
-    [customImageSize, imageSizePreset],
+    () => {
+      if (imageSizePreset === CUSTOM_SIZE_VALUE) {
+        return customImageSize.trim();
+      }
+      return IMAGE_RESOLUTION_PRESETS[imageSizePreset]?.[imageResolutionTier] ?? imageSizePreset;
+    },
+    [customImageSize, imageResolutionTier, imageSizePreset],
   );
   const selectedConversation = useMemo(
     () => conversations.find((item) => item.id === selectedConversationId) ?? null,
@@ -374,6 +384,8 @@ export default function ImagePage() {
       setImageCount(preferences.imageCount);
       setImageSizePreset(preferences.imageSizePreset);
       setCustomImageSize(preferences.customImageSize);
+      setImageResolutionTier(preferences.imageResolutionTier);
+      setImageQuality(preferences.imageQuality);
       setImageMode(preferences.imageMode);
       setPreferencesReady(true);
     };
@@ -394,9 +406,21 @@ export default function ImagePage() {
       imageCount,
       imageSizePreset,
       customImageSize,
+      imageResolutionTier,
+      imageQuality,
       imageMode,
     });
-  }, [customImageSize, imageCount, imageModel, imageMode, imageSizePreset, preferencesReady, requestMode]);
+  }, [
+    customImageSize,
+    imageCount,
+    imageModel,
+    imageMode,
+    imageQuality,
+    imageResolutionTier,
+    imageSizePreset,
+    preferencesReady,
+    requestMode,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -460,15 +484,10 @@ export default function ImagePage() {
   }, []);
 
   useEffect(() => {
-    if (imageSizePreset === CUSTOM_SIZE_VALUE) {
-      const value = customImageSize.trim();
-      if (value) {
-        setImageSize(value);
-      }
-      return;
+    if (resolvedImageSize) {
+      setImageSize(resolvedImageSize);
     }
-    setImageSize(imageSizePreset);
-  }, [customImageSize, imageSizePreset]);
+  }, [resolvedImageSize]);
 
   const refreshSessionSnapshot = useCallback(async () => {
     try {
@@ -793,6 +812,7 @@ export default function ImagePage() {
                 prompt: queuedTurn.prompt,
                 n: queuedTurn.count,
                 size: turnSize,
+                quality: queuedTurn.quality || "high",
               };
 
         const createdJob = await createAsyncJob({
@@ -938,6 +958,7 @@ export default function ImagePage() {
       mode: imageMode,
       requestMode: "async_sse",
       size: nextSize,
+      quality: imageQuality,
       referenceImages: imageMode === "edit" ? referenceImages : [],
       count: parsedCount,
       images: Array.from({ length: parsedCount }, (_, index) => ({
@@ -1016,6 +1037,8 @@ export default function ImagePage() {
             imageSize={resolvedImageSize || imageSize}
             imageSizePreset={imageSizePreset}
             customImageSize={customImageSize}
+            imageResolutionTier={imageResolutionTier}
+            imageQuality={imageQuality}
             availableQuota={availableQuota}
             requestQuota={requestQuota}
             isTestMode={isClientConsole}
@@ -1035,6 +1058,8 @@ export default function ImagePage() {
               }
             }}
             onCustomImageSizeChange={setCustomImageSize}
+            onImageResolutionTierChange={setImageResolutionTier}
+            onImageQualityChange={setImageQuality}
             onSubmit={handleSubmit}
             onPickReferenceImage={() => fileInputRef.current?.click()}
             onReferenceImageChange={handleReferenceImageChange}

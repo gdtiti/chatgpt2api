@@ -3,9 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 from services.config import config
+from services.image_options import IMAGE_QUALITY_OPTIONS, IMAGE_RATIO_SIZE_OPTIONS, IMAGE_RESOLUTION_PRESETS
 from utils.helper import IMAGE_MODELS
 
-IMAGE_SIZE_OPTIONS = ["1:1", "16:9", "9:16", "4:3", "3:4"]
+IMAGE_SIZE_OPTIONS = IMAGE_RATIO_SIZE_OPTIONS
 
 
 def _capabilities_for_model(model_id: str) -> list[str]:
@@ -47,6 +48,9 @@ class ModelRegistry:
                         "default_size": "1:1",
                         "response_format_choices": ["b64_json", "url"],
                         "default_response_format": config.image_response_format,
+                        "quality_choices": IMAGE_QUALITY_OPTIONS,
+                        "default_quality": "high",
+                        "resolution_presets": IMAGE_RESOLUTION_PRESETS,
                         "supports_custom_size": True,
                         "supports_multiple_reference_images": True,
                     } if model_id in IMAGE_MODELS else None,

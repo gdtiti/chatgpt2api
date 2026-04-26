@@ -2,7 +2,7 @@
 
 import localforage from "localforage";
 
-import type { ImageModel } from "@/lib/api";
+import type { ImageModel, ImageQuality } from "@/lib/api";
 
 export type ImageConversationMode = "generate" | "edit";
 export type ImageRequestMode = "direct" | "async_http" | "async_sse";
@@ -32,6 +32,7 @@ export type ImageTurn = {
   mode: ImageConversationMode;
   requestMode: ImageRequestMode;
   size?: string;
+  quality?: ImageQuality;
   asyncJobId?: string;
   referenceImages: StoredReferenceImage[];
   count: number;
@@ -142,6 +143,7 @@ function normalizeTurn(turn: ImageTurn & Record<string, unknown>): ImageTurn {
     mode: turn.mode === "edit" ? "edit" : "generate",
     requestMode: "async_sse",
     size: typeof turn.size === "string" && turn.size.trim() ? turn.size.trim() : "1:1",
+    quality: turn.quality === "low" || turn.quality === "medium" || turn.quality === "high" ? turn.quality : "high",
     asyncJobId: typeof turn.asyncJobId === "string" && turn.asyncJobId.trim() ? turn.asyncJobId.trim() : undefined,
     referenceImages: getLegacyReferenceImages(turn),
     count: Math.max(1, Number(turn.count || normalizedImages.length || 1)),
@@ -169,6 +171,10 @@ function normalizeConversation(conversation: ImageConversation & Record<string, 
           mode: conversation.mode === "edit" ? "edit" : "generate",
           requestMode: "async_sse",
           size: typeof conversation.size === "string" && conversation.size.trim() ? conversation.size.trim() : "1:1",
+          quality:
+            conversation.quality === "low" || conversation.quality === "medium" || conversation.quality === "high"
+              ? conversation.quality
+              : "high",
           asyncJobId:
             typeof conversation.asyncJobId === "string" && conversation.asyncJobId.trim()
               ? conversation.asyncJobId.trim()

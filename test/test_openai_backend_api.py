@@ -72,6 +72,35 @@ class OpenAIBackendApiImageTransportTests(unittest.TestCase):
         self.assertEqual(session.calls[0]["http_version"], CurlHttpVersion.V1_1)
         self.assertEqual(session.calls[0]["method"], "GET")
 
+    def test_image_prompt_distinguishes_pixel_size_from_ratio(self) -> None:
+        api = OpenAIBackendAPI.__new__(OpenAIBackendAPI)
+
+        prompt = api._build_image_prompt("draw a cat", "1536x1024", "high")
+
+        self.assertIn("1536x1024", prompt)
+        self.assertIn("高质量", prompt)
+        self.assertNotIn("宽高比为 1536x1024", prompt)
+
+    def test_codex_image_tool_includes_size_and_normalized_quality(self) -> None:
+        api = OpenAIBackendAPI.__new__(OpenAIBackendAPI)
+        captured: dict[str, object] = {}
+
+        def fake_responses(**kwargs):
+            captured.update(kwargs)
+            return []
+
+        api.responses = fake_responses  # type: ignore[method-assign]
+
+        api._collect_codex_events("draw a cat", size="1024x1024", quality="hd")
+
+        tools = captured["tools"]
+        self.assertIsInstance(tools, list)
+        tool = tools[0]
+        self.assertEqual(tool["type"], "image_generation")
+        self.assertEqual(tool["output_format"], "png")
+        self.assertEqual(tool["size"], "1024x1024")
+        self.assertEqual(tool["quality"], "high")
+
 
 if __name__ == "__main__":
     unittest.main()

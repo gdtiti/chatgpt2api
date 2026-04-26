@@ -18,6 +18,7 @@ from api.support import (
 )
 from services.account_service import account_service
 from services.chatgpt_service import ChatGPTService, ImageGenerationError
+from services.image_options import ImageOptionError, normalize_image_quality, normalize_image_size
 from services.job_service import JobService
 from utils.helper import is_image_chat_request, responses_sse_stream, sse_json_stream
 
@@ -27,6 +28,7 @@ class ImageGenerationRequest(BaseModel):
     model: str = "gpt-image-2"
     n: int = Field(default=1, ge=1, le=4)
     size: str | None = None
+    quality: str | None = None
     response_format: str | None = None
     history_disabled: bool = True
     stream: bool | None = None
@@ -106,6 +108,11 @@ def create_router(chatgpt_service: ChatGPTService, job_service: JobService | Non
     ):
         principal = require_client_principal(authorization)
         ensure_model_access(principal, body.model)
+        try:
+            size = normalize_image_size(body.size)
+            quality = normalize_image_quality(body.quality)
+        except ImageOptionError as exc:
+            raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc
         reserve_image_quota(principal, body.n)
         base_url = resolve_image_base_url(request)
         request_id = uuid4().hex
@@ -115,7 +122,7 @@ def create_router(chatgpt_service: ChatGPTService, job_service: JobService | Non
             except RuntimeError as exc:
                 raise_image_quota_error(exc)
             chunks = chatgpt_service.stream_image_generation(
-                body.prompt, body.model, body.n, body.size, body.response_format, base_url
+                body.prompt, body.model, body.n, size, body.response_format, base_url, quality=quality
             )
             if job_service is not None:
                 tracked_job = job_service.start_inline_job(
@@ -124,7 +131,8 @@ def create_router(chatgpt_service: ChatGPTService, job_service: JobService | Non
                         "model": body.model,
                         "prompt": body.prompt,
                         "n": body.n,
-                        "size": body.size,
+                        "size": size,
+                        "quality": quality,
                         "response_format": body.response_format,
                         "stream": True,
                     },
@@ -145,10 +153,11 @@ def create_router(chatgpt_service: ChatGPTService, job_service: JobService | Non
                 body.prompt,
                 body.model,
                 body.n,
-                body.size,
+                size,
                 body.response_format,
                 base_url,
                 request_id,
+                quality=quality,
             )
         except ImageGenerationError as exc:
             raise_image_quota_error(exc)

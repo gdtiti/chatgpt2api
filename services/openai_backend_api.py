@@ -15,6 +15,11 @@ from PIL import Image
 
 from services.account_service import account_service
 from services.config import config
+from services.image_options import (
+    is_pixel_image_size,
+    normalize_image_quality,
+    normalize_image_size,
+)
 from services.proxy_service import proxy_settings
 from utils.helper import build_chat_image_markdown_content, ensure_ok, new_uuid, parse_sse_lines
 from utils.log import logger
@@ -299,20 +304,33 @@ class OpenAIBackendAPI:
         data.sort(key=lambda item: item["id"])
         return {"object": "list", "data": data}
 
-    def _build_image_prompt(self, prompt: str, size: str | None) -> str:
-        """把标准图片 prompt 和宽高比转成底层图片生成 prompt。"""
-        if not size:
+    def _build_image_prompt(self, prompt: str, size: str | None, quality: str | None = None) -> str:
+        """把标准图片参数转成底层图片生成 prompt。"""
+        hints: list[str] = []
+        normalized_size = normalize_image_size(size)
+        if normalized_size:
+            if is_pixel_image_size(normalized_size):
+                hints.append(f"输出图片尺寸为 {normalized_size} 像素。")
+            elif normalized_size in {"1:1", "16:9", "9:16", "4:3", "3:4"}:
+                hints.append({
+                    "1:1": "输出为 1:1 正方形构图，主体居中，适合正方形画幅。",
+                    "16:9": "输出为 16:9 横屏构图，适合宽画幅展示。",
+                    "9:16": "输出为 9:16 竖屏构图，适合竖版画幅展示。",
+                    "4:3": "输出为 4:3 比例，兼顾宽度与高度，适合展示画面细节。",
+                    "3:4": "输出为 3:4 比例，纵向构图，适合人物肖像或竖向场景。",
+                }[normalized_size])
+            else:
+                hints.append(f"输出图片，宽高比为 {normalized_size}。")
+        normalized_quality = normalize_image_quality(quality)
+        if normalized_quality == "high":
+            hints.append("输出为高质量、细节丰富的图片。")
+        elif normalized_quality == "medium":
+            hints.append("输出为中等质量、细节均衡的图片。")
+        elif normalized_quality == "low":
+            hints.append("输出为低成本草图质量图片。")
+        if not hints:
             return prompt
-        if size not in {"1:1", "16:9", "9:16", "4:3", "3:4"}:
-            return f"{prompt.strip()}\n\n输出图片，宽高比为 {size}。"
-        hint = {
-            "1:1": "输出为 1:1 正方形构图，主体居中，适合正方形画幅。",
-            "16:9": "输出为 16:9 横屏构图，适合宽画幅展示。",
-            "9:16": "输出为 9:16 竖屏构图，适合竖版画幅展示。",
-            "4:3": "输出为 4:3 比例，兼顾宽度与高度，适合展示画面细节。",
-            "3:4": "输出为 3:4 比例，纵向构图，适合人物肖像或竖向场景。",
-        }[size]
-        return f"{prompt.strip()}\n\n{hint}"
+        return f"{prompt.strip()}\n\n" + "\n".join(hints)
 
     def _image_model_slug(self, model: str) -> str:
         """把标准图片模型名映射到底层 model slug。"""
@@ -750,7 +768,7 @@ class OpenAIBackendAPI:
         return {"created": int(time.time()), "data": data}
 
     def _run_image_task(self, prompt: str, model: str, size: str | None, images: Optional[list[str]] = None,
-                        response_format: str = "url") -> Dict[str, Any]:
+                        response_format: str = "url", quality: str | None = None) -> Dict[str, Any]:
         """执行图片生成或图片编辑主流程。"""
         if not self.access_token:
             raise RuntimeError("access_token is required for image endpoints")
@@ -759,6 +777,7 @@ class OpenAIBackendAPI:
             "prompt": prompt,
             "model": model,
             "size": size,
+            "quality": quality,
             "image_count": len(images or []),
         })
         references = [self._upload_image(image, f"image_{idx}.png") for idx, image in enumerate(images or [], start=1)]
@@ -773,7 +792,7 @@ class OpenAIBackendAPI:
             "so_token_present": bool(requirements.so_token),
             "raw_finalize": requirements.raw_finalize,
         })
-        final_prompt = self._build_image_prompt(prompt, size)
+        final_prompt = self._build_image_prompt(prompt, size, quality)
         logger.debug({"event": "image_final_prompt", "final_prompt": final_prompt})
         conduit_token = self._prepare_image_conversation(final_prompt, requirements, model)
         logger.debug({"event": "image_conduit_ready", "conduit_token_present": bool(conduit_token)})
@@ -831,11 +850,29 @@ class OpenAIBackendAPI:
             content.append({"type": "input_image", "image_url": self._image_to_data_url(image)})
         return [{"role": "user", "content": content}]
 
+    def _codex_image_generation_tool(self, size: str | None = None, quality: str | None = None) -> Dict[str, Any]:
+        tool: Dict[str, Any] = {
+            "type": "image_generation",
+            "model": "gpt-image-2",
+            "action": "generate",
+            "output_format": "png",
+        }
+        normalized_size = normalize_image_size(size)
+        if normalized_size and is_pixel_image_size(normalized_size):
+            tool["size"] = normalized_size
+        normalized_quality = normalize_image_quality(quality)
+        if normalized_quality:
+            tool["quality"] = normalized_quality
+        return tool
+
     def _collect_codex_events(self, prompt: str, model: str = CODEX_IMAGE_MODEL,
-                              images: Optional[list[str]] = None) -> list[Dict[str, Any]]:
+                              images: Optional[list[str]] = None, size: str | None = None,
+                              quality: str | None = None) -> list[Dict[str, Any]]:
+        final_prompt = self._build_image_prompt(prompt, size, quality)
         events = list(self.responses(
-            input=self._build_codex_response_input(prompt, images),
+            input=self._build_codex_response_input(final_prompt, images),
             model=model,
+            tools=[self._codex_image_generation_tool(size, quality)],
             stream=True,
         ))
         logger.debug({"event": "codex_responses_events_collected", "event_count": len(events)})
@@ -878,9 +915,16 @@ class OpenAIBackendAPI:
         }
 
     def _run_codex_image_task(self, prompt: str, response_format: str = "url",
-                              images: Optional[list[str]] = None) -> Dict[str, Any]:
+                              images: Optional[list[str]] = None, size: str | None = None,
+                              quality: str | None = None) -> Dict[str, Any]:
         logger.debug({"event": "codex_image_task_start", "prompt": prompt, "image_count": len(images or [])})
-        events = self._collect_codex_events(prompt=prompt, model=CODEX_IMAGE_MODEL, images=images)
+        events = self._collect_codex_events(
+            prompt=prompt,
+            model=CODEX_IMAGE_MODEL,
+            images=images,
+            size=size,
+            quality=quality,
+        )
         result = self._codex_image_response(events, response_format)
         logger.debug({
             "event": "codex_image_task_done",
@@ -959,6 +1003,7 @@ class OpenAIBackendAPI:
         model: str = "gpt-image-2",
         size: str | None = None,
         images: Optional[list[str]] = None,
+        quality: str | None = None,
     ) -> Iterator[Dict[str, Any]]:
         if not self.access_token:
             raise RuntimeError("access_token is required for image endpoints")
@@ -974,7 +1019,7 @@ class OpenAIBackendAPI:
         references = [self._upload_image(image, f"image_{idx}.png") for idx, image in enumerate(images or [], start=1)]
         self._bootstrap()
         requirements = self._get_auth_chat_requirements()
-        final_prompt = self._build_image_prompt(prompt, size)
+        final_prompt = self._build_image_prompt(prompt, size, quality)
         conduit_token = self._prepare_image_conversation(final_prompt, requirements, model)
         sse = self._start_image_generation(final_prompt, requirements, conduit_token, model, references)
         try:
@@ -1347,11 +1392,11 @@ class OpenAIBackendAPI:
         return self._normalize_models(self._get_models_raw(authenticated=bool(self.access_token)))
 
     def images_generations(self, prompt: str, model: str = "gpt-image-2", size: str | None = None,
-                           response_format: str = "url") -> Dict[str, Any]:
+                           response_format: str = "url", quality: str | None = None) -> Dict[str, Any]:
         """返回 OpenAI `/v1/images/generations` 风格结果。"""
         if self._is_codex_image_model(model):
-            return self._run_codex_image_task(prompt, response_format=response_format)
-        return self._run_image_task(prompt, model, size, response_format=response_format)
+            return self._run_codex_image_task(prompt, response_format=response_format, size=size, quality=quality)
+        return self._run_image_task(prompt, model, size, response_format=response_format, quality=quality)
 
     def images_edits(self, image: str | list[str], prompt: str, model: str = "gpt-image-2", size: str | None = None,
                      response_format: str = "url") -> Dict[str, Any]:

@@ -220,13 +220,13 @@ export default function DocsPage() {
             <div className="space-y-1">
               <h2 className="text-lg font-semibold tracking-tight">图片参数说明</h2>
               <p className="text-sm text-stone-500">
-                当前已支持 `size=1:1/16:9/9:16/4:3/3:4`，网页也可填写自定义尺寸文本，例如 `1248x1248` 或 `21:9`。文生图会校验像素尺寸并透传
+                当前已支持 `size=1:1/4:3/3:4/3:2/16:9/21:9/9:16`，网页也可填写自定义尺寸文本，例如 `1248x1248` 或 `21:9`。文生图会校验像素尺寸并透传
                 `quality=low/medium/high`。图片返回格式支持
                 `b64_json` 和 `url`；未配置外链地址时，`url` 会返回相对路径 `/api/view/data/...`。缩略图与瀑布墙预览图都会保持原图比例，尺寸和质量可在设置页或环境变量中配置。
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
-              {["1:1", "16:9", "9:16", "4:3", "3:4"].map((item) => (
+              {["1:1", "4:3", "3:4", "3:2", "16:9", "21:9", "9:16"].map((item) => (
                 <Badge key={item} variant="secondary" className="rounded-full px-3 py-1">
                   {item}
                 </Badge>

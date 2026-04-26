@@ -26,4 +26,4 @@ services:
       CHATGPT2API_DATA_CLEANUP_INTERVAL_MINUTES: ${CHATGPT2API_DATA_CLEANUP_INTERVAL_MINUTES:-}
     volumes:
       - ./data:/app/data
-      - ./config.json:/app/config.json:ro
+      - ./config.json:/app/config.json

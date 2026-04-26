@@ -299,6 +299,47 @@ class ConfigLoadingTests(unittest.TestCase):
                     else:
                         module.os.environ[name] = value
 
+    def test_config_store_update_persists_image_runtime_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_file = Path(tmp_dir) / "config.json"
+            config_file.write_text(json.dumps({"auth-key": "file-auth"}), encoding="utf-8")
+
+            module = self.config_module
+            env_names = [
+                "CHATGPT2API_IMAGE_FAILURE_STRATEGY",
+                "CHATGPT2API_IMAGE_RETRY_COUNT",
+                "CHATGPT2API_IMAGE_PARALLEL_ATTEMPTS",
+                "CHATGPT2API_IMAGE_PLACEHOLDER_PATH",
+            ]
+            old_env = {name: module.os.environ.get(name) for name in env_names}
+            try:
+                for name in env_names:
+                    module.os.environ.pop(name, None)
+
+                store = module.ConfigStore(config_file)
+                store.update(
+                    {
+                        "image_failure_strategy": "placeholder",
+                        "image_retry_count": 2,
+                        "image_parallel_attempts": 3,
+                        "image_placeholder_path": "data/placeholders/fallback.png",
+                    }
+                )
+
+                reloaded_store = module.ConfigStore(config_file)
+                reloaded_data = json.loads(config_file.read_text(encoding="utf-8"))
+
+                self.assertEqual(reloaded_store.image_failure_strategy, "placeholder")
+                self.assertEqual(reloaded_store.image_retry_count, 2)
+                self.assertEqual(reloaded_store.image_parallel_attempts, 3)
+                self.assertEqual(reloaded_data["image_placeholder_path"], "data/placeholders/fallback.png")
+            finally:
+                for name, value in old_env.items():
+                    if value is None:
+                        module.os.environ.pop(name, None)
+                    else:
+                        module.os.environ[name] = value
+
 
 if __name__ == "__main__":
     unittest.main()

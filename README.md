@@ -53,7 +53,7 @@ CHATGPT2API_DATA_CLEANUP_INTERVAL_MINUTES
 
 启动端口额外支持通用环境变量 `PORT`。优先级是：`CHATGPT2API_PORT` > `PORT` > `config.json` 中的 `port` > 默认 `80`。
 
-使用 `docker compose` 时，可直接在当前 shell 导出这些变量，或写入同目录 `.env` 文件，`docker-compose.yml` 已将它们透传到容器内。若同时调整容器监听端口，可再设置 `CHATGPT2API_HOST_PORT` 修改宿主机映射端口。
+使用 `docker compose` 时，可直接在当前 shell 导出这些变量，或写入同目录 `.env` 文件，`docker-compose.yml` 已将它们透传到容器内。`config.json` 会以可写方式挂载到容器内，设置页保存的系统配置会写回该文件；如果某项环境变量为非空值，该项仍会优先覆盖 `config.json`。若同时调整容器监听端口，可再设置 `CHATGPT2API_HOST_PORT` 修改宿主机映射端口。
 
 ## 功能
 
@@ -69,7 +69,7 @@ CHATGPT2API_DATA_CLEANUP_INTERVAL_MINUTES
 - `GET /v1/models` 返回 `gpt-image-2`、`codex-gpt-image-2`、`auto`、`gpt-5`、`gpt-5-1`、`gpt-5-2`、`gpt-5-3`、`gpt-5-3-mini`、
   `gpt-5-mini`
 - 支持通过 `n` 返回多张生成结果
-- 图片生成与编辑支持 `size=1:1/16:9/9:16/4:3/3:4`；文生图额外支持合法像素尺寸，例如 `1248x1248`、`2560x1440`
+- 图片生成与编辑支持 `size=1:1/4:3/3:4/3:2/16:9/21:9/9:16`；文生图额外支持合法像素尺寸，例如 `1248x1248`、`2560x1440`
 - 图片生成支持 `quality=low/medium/high`，并兼容 `standard -> medium`、`hd -> high`
 - 图片生成支持后台配置失败策略：`fail / retry / placeholder`
 - 图片生成支持后台配置并发尝试数；单次请求可并发多个上游尝试并返回首个成功结果
@@ -234,7 +234,7 @@ curl http://localhost:8000/v1/images/generations \
 | `model`           | 图片模型，当前可用值以 `/v1/models` 返回结果为准，推荐使用 `gpt-image-2` |
 | `prompt`          | 图片生成提示词                                            |
 | `n`               | 生成数量，当前后端限制为 `1-4`                                 |
-| `size`            | 可选尺寸/比例，支持 `1:1`、`16:9`、`9:16`、`4:3`、`3:4`，也支持合法像素尺寸如 `1248x1248` |
+| `size`            | 可选尺寸/比例，支持 `1:1`、`4:3`、`3:4`、`3:2`、`16:9`、`21:9`、`9:16`，也支持合法像素尺寸如 `1248x1248` |
 | `quality`         | 可选生成质量，支持 `low`、`medium`、`high`，兼容 `standard` 和 `hd` |
 | `response_format` | 当前请求模型中包含该字段，默认值为 `b64_json`                       |
 
@@ -267,7 +267,7 @@ curl http://localhost:8000/v1/images/edits \
 | `model`  | 图片模型， `gpt-image-2`                 |
 | `prompt` | 图片编辑提示词                             |
 | `n`      | 生成数量，当前后端限制为 `1-4`                  |
-| `size`   | 可选尺寸/比例，支持 `1:1`、`16:9`、`9:16`、`4:3`、`3:4` |
+| `size`   | 可选尺寸/比例，支持 `1:1`、`4:3`、`3:4`、`3:2`、`16:9`、`21:9`、`9:16` |
 | `image`  | 需要编辑的图片文件，使用 multipart/form-data 上传 |
 
 <br>

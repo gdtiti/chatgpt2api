@@ -16,12 +16,17 @@ import {
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { IMAGE_QUALITY_OPTIONS, IMAGE_RESOLUTION_TIERS, IMAGE_SIZE_OPTIONS } from "@/lib/api";
+import { IMAGE_QUALITY_OPTIONS, IMAGE_RESOLUTION_PRESETS, IMAGE_RESOLUTION_TIERS, IMAGE_SIZE_OPTIONS } from "@/lib/api";
 import type { ImageQuality, ImageResolutionTier } from "@/lib/api";
 import type { ImageConversationMode, ImageRequestMode } from "@/store/image-conversations";
 import { cn } from "@/lib/utils";
 
 const CUSTOM_SIZE_VALUE = "__custom__";
+const RESOLUTION_TIER_LABELS: Record<ImageResolutionTier, string> = {
+  sd: "SD",
+  "2k": "2K",
+  "4k": "4K",
+};
 
 type ImageComposerProps = {
   mode: ImageConversationMode;
@@ -105,6 +110,11 @@ export function ImageComposer({
     () => referenceImages.map((image, index) => ({ id: `${image.name}-${index}`, src: image.dataUrl })),
     [referenceImages],
   );
+  const currentResolutionPresets = IMAGE_RESOLUTION_PRESETS[draftImageSizePreset];
+  const currentResolvedSize =
+    draftImageSizePreset === CUSTOM_SIZE_VALUE
+      ? draftCustomImageSize.trim()
+      : currentResolutionPresets?.[draftImageResolutionTier] ?? draftImageSizePreset;
 
   const handleTextareaPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
     const imageFiles = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));
@@ -335,7 +345,7 @@ export function ImageComposer({
                   <SelectContent>
                     {IMAGE_SIZE_OPTIONS.map((option) => (
                       <SelectItem key={option} value={option}>
-                        {option}
+                        {option} · {IMAGE_RESOLUTION_TIERS.map((tier) => IMAGE_RESOLUTION_PRESETS[option]?.[tier]).filter(Boolean).join(" / ")}
                       </SelectItem>
                     ))}
                     <SelectItem value={CUSTOM_SIZE_VALUE}>自定义</SelectItem>
@@ -365,11 +375,12 @@ export function ImageComposer({
                   <SelectContent>
                     {IMAGE_RESOLUTION_TIERS.map((option) => (
                       <SelectItem key={option} value={option}>
-                        {option.toUpperCase()}
+                        {RESOLUTION_TIER_LABELS[option]}{currentResolutionPresets?.[option] ? ` · ${currentResolutionPresets[option]}` : ""}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                <p className="text-xs leading-5 text-stone-500">当前实际 size：{currentResolvedSize || "未设置"}</p>
               </div>
 
               <div className="space-y-2">

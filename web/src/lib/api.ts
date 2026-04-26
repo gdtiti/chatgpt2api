@@ -8,17 +8,18 @@ export type { AuthSession };
 export type AccountType = "Free" | "Plus" | "ProLite" | "Pro" | "Team";
 export type AccountStatus = "正常" | "限流" | "异常" | "禁用";
 export type ImageModel = "auto" | "gpt-image-1" | "gpt-image-2" | "codex-gpt-image-2" | string;
-export type ImageSizeOption = "1:1" | "16:9" | "9:16" | "4:3" | "3:4";
+export type ImageSizeOption = "1:1" | "4:3" | "3:4" | "3:2" | "16:9" | "21:9" | "9:16";
 export type ImageSizeValue = string;
 export type ImageQuality = "low" | "medium" | "high";
 export type ImageResolutionTier = "sd" | "2k" | "4k";
 
-export const IMAGE_SIZE_OPTIONS: ImageSizeOption[] = ["1:1", "16:9", "9:16", "4:3", "3:4"];
+export const IMAGE_SIZE_OPTIONS: ImageSizeOption[] = ["1:1", "4:3", "3:4", "3:2", "16:9", "21:9", "9:16"];
 export const IMAGE_QUALITY_OPTIONS: ImageQuality[] = ["low", "medium", "high"];
 export const IMAGE_RESOLUTION_TIERS: ImageResolutionTier[] = ["sd", "2k", "4k"];
 export const IMAGE_RESOLUTION_PRESETS: Record<string, Record<ImageResolutionTier, string>> = {
   "1:1": { sd: "1248x1248", "2k": "2048x2048", "4k": "2880x2880" },
   "4:3": { sd: "1440x1072", "2k": "2048x1536", "4k": "3264x2448" },
+  "3:4": { sd: "1072x1440", "2k": "1536x2048", "4k": "2448x3264" },
   "3:2": { sd: "1536x1024", "2k": "2160x1440", "4k": "3456x2304" },
   "16:9": { sd: "1664x928", "2k": "2560x1440", "4k": "3840x2160" },
   "21:9": { sd: "1904x816", "2k": "3360x1440", "4k": "3808x1632" },

@@ -103,7 +103,7 @@ class APIKeyRouteTests(unittest.TestCase):
                 self.assertEqual(catalog_response.json()["items"][1]["id"], "gpt-image-2")
                 self.assertEqual(
                     catalog_response.json()["items"][1]["image_options"]["size_choices"],
-                    ["1:1", "16:9", "9:16", "4:3", "3:4"],
+                    ["1:1", "4:3", "3:4", "3:2", "16:9", "21:9", "9:16"],
                 )
             finally:
                 support_module.api_key_service = old_support_service

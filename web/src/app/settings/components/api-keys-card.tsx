@@ -158,13 +158,22 @@ export function APIKeysCard() {
     }
   };
 
-  const handleRotate = async (item: APIKeyItem) => {
+  const handleRotate = async (item: APIKeyItem, copyAfterRotate = false) => {
     setWorkingKeyId(item.id);
     try {
       const data = await rotateApiKey(item.id);
       setItems((current) => current.map((key) => (key.id === item.id ? data.item : key)));
       setLatestPlainTextKey(data.plain_text);
-      toast.success(`API Key ${item.name} 已轮换`);
+      if (copyAfterRotate) {
+        try {
+          await navigator.clipboard.writeText(data.plain_text);
+          toast.success(`API Key ${item.name} 已重新生成并复制`);
+        } catch {
+          toast.warning("新 API Key 已生成，请在上方明文区域手动复制");
+        }
+      } else {
+        toast.success(`API Key ${item.name} 已轮换`);
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "轮换 API Key 失败");
     } finally {
@@ -374,10 +383,10 @@ export function APIKeysCard() {
                         variant="outline"
                         className="h-9 rounded-xl border-stone-200 bg-white px-4 text-stone-700"
                         disabled={isWorking}
-                        onClick={() => void handleRotate(item)}
+                        onClick={() => void handleRotate(item, true)}
                       >
                         {isWorking ? <LoaderCircle className="size-4 animate-spin" /> : <RefreshCcw className="size-4" />}
-                        轮换
+                        重新生成并复制
                       </Button>
                       <Button
                         type="button"

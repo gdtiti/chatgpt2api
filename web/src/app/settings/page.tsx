@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 import { APIKeysCard } from "./components/api-keys-card";
 import { ConfigCard } from "./components/config-card";
@@ -12,12 +12,22 @@ import { ImportBrowserDialog } from "./components/import-browser-dialog";
 import { SettingsHeader } from "./components/settings-header";
 import { Sub2APIConnections } from "./components/sub2api-connections";
 import { useSettingsStore } from "./store";
+import { IMPORT_PROGRESS_POLL_INTERVAL_MS } from "@/lib/polling";
 
 function SettingsDataController() {
   const didLoadRef = useRef(false);
+  const pollInFlightRef = useRef(false);
   const initialize = useSettingsStore((state) => state.initialize);
   const loadPools = useSettingsStore((state) => state.loadPools);
   const pools = useSettingsStore((state) => state.pools);
+  const hasRunningJobs = useMemo(
+    () =>
+      pools.some((pool) => {
+        const status = pool.import_job?.status;
+        return status === "pending" || status === "running";
+      }),
+    [pools],
+  );
 
   useEffect(() => {
     if (didLoadRef.current) {
@@ -28,19 +38,21 @@ function SettingsDataController() {
   }, [initialize]);
 
   useEffect(() => {
-    const hasRunningJobs = pools.some((pool) => {
-      const status = pool.import_job?.status;
-      return status === "pending" || status === "running";
-    });
     if (!hasRunningJobs) {
       return;
     }
 
     const timer = window.setInterval(() => {
-      void loadPools(true);
-    }, 1500);
+      if (pollInFlightRef.current) {
+        return;
+      }
+      pollInFlightRef.current = true;
+      void loadPools(true).finally(() => {
+        pollInFlightRef.current = false;
+      });
+    }, IMPORT_PROGRESS_POLL_INTERVAL_MS);
     return () => window.clearInterval(timer);
-  }, [loadPools, pools]);
+  }, [hasRunningJobs, loadPools]);
 
   return null;
 }

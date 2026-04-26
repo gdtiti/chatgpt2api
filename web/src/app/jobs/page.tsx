@@ -34,6 +34,7 @@ import {
   type AsyncJobStatus,
   type AsyncJobSummary,
 } from "@/lib/api";
+import { JOBS_ACTIVE_POLL_INTERVAL_MS } from "@/lib/polling";
 import { cn } from "@/lib/utils";
 
 const statusOptions: Array<{ value: AsyncJobStatus | "all"; label: string }> = [
@@ -192,6 +193,7 @@ function extractImageSources(result: unknown, job?: AsyncJobItem | null) {
 
 export default function JobsPage() {
   const didLoadRef = useRef(false);
+  const silentLoadInFlightRef = useRef(false);
   const [jobs, setJobs] = useState<AsyncJobItem[]>([]);
   const [summary, setSummary] = useState<AsyncJobSummary>({
     total: 0,
@@ -275,8 +277,14 @@ export default function JobsPage() {
       return;
     }
     const timer = window.setInterval(() => {
-      void loadJobs(true);
-    }, 3000);
+      if (silentLoadInFlightRef.current) {
+        return;
+      }
+      silentLoadInFlightRef.current = true;
+      void loadJobs(true).finally(() => {
+        silentLoadInFlightRef.current = false;
+      });
+    }, JOBS_ACTIVE_POLL_INTERVAL_MS);
     return () => window.clearInterval(timer);
   }, [hasActiveJobs, limit, page, statusFilter, typeFilter, searchQuery, sortOption]);
 

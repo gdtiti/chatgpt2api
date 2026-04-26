@@ -1,6 +1,9 @@
 "use client";
 
+import { ExternalLink, FileJson } from "lucide-react";
+
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
 const authExample = `# 管理接口
@@ -77,6 +80,40 @@ CHATGPT2API_DATA_CLEANUP_INTERVAL_MINUTES`;
 
 const imageGetExample = `curl http://localhost:8000/api/view/data/2026-04-25/<task-id>-1.png`;
 
+const endpointGroups = [
+  {
+    name: "OpenAI 兼容接口",
+    items: [
+      ["GET", "/v1/models", "返回 OpenAI 风格模型列表"],
+      ["POST", "/v1/chat/completions", "同步或流式 Chat Completions"],
+      ["POST", "/v1/responses", "Responses 兼容接口"],
+      ["POST", "/v1/images/generations", "文生图，支持 size / quality / response_format"],
+      ["POST", "/v1/images/edits", "图生图，支持单图和多参考图"],
+    ],
+  },
+  {
+    name: "异步任务",
+    items: [
+      ["POST", "/api/async/jobs", "提交图片、chat.completions、responses 异步任务"],
+      ["GET", "/api/async/jobs", "分页查询任务列表"],
+      ["GET", "/api/async/jobs/{job_id}", "查询任务状态"],
+      ["GET", "/api/async/jobs/{job_id}/events", "SSE 订阅任务进度与结果"],
+      ["GET", "/api/async/jobs/{job_id}/result", "读取任务结果"],
+      ["GET", "/api/async/jobs/{job_id}/log", "读取任务日志"],
+    ],
+  },
+  {
+    name: "管理与配置",
+    items: [
+      ["GET/POST", "/api/admin/keys", "管理 client API key"],
+      ["GET/POST", "/api/accounts", "账号列表、导入与刷新"],
+      ["GET/POST", "/api/settings/config", "读取和保存系统配置"],
+      ["GET", "/api/catalog/models", "读取模型能力目录"],
+      ["GET", "/api/view/data/{path}", "读取服务端保存的图片文件"],
+    ],
+  },
+] as const;
+
 function CodeBlock({ value }: { value: string }) {
   return (
     <pre className="overflow-x-auto rounded-2xl bg-stone-950 px-4 py-4 text-xs leading-6 text-stone-100">
@@ -92,14 +129,80 @@ export default function DocsPage() {
         <div className="text-xs font-semibold tracking-[0.18em] text-stone-500 uppercase">API Docs</div>
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-semibold tracking-tight">API 使用说明</h1>
+          <Badge variant="secondary">Swagger 已内嵌</Badge>
           <Badge variant="info">OpenAI 兼容图片接口</Badge>
           <Badge variant="success">quality 已支持</Badge>
         </div>
         <p className="max-w-[900px] text-sm leading-7 text-stone-500">
-          页面内汇总了下游接入时最常用的鉴权方式、模型接口、异步任务接口和图片返回策略。网页画图页现已固定走异步 SSE；文生图支持
+          以 Swagger / OpenAPI 作为完整接口事实源，页面下方保留最常用的鉴权、图片、异步任务和文件访问示例。网页画图页现已固定走异步 SSE；文生图支持
           `size`、分辨率预设和 `quality=low/medium/high`。
         </p>
       </div>
+
+      <Card className="rounded-2xl border-white/80 bg-white/90 shadow-sm">
+        <CardContent className="space-y-4 p-6">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="space-y-1">
+              <h2 className="text-lg font-semibold tracking-tight">Swagger / OpenAPI</h2>
+              <p className="max-w-[820px] text-sm leading-6 text-stone-500">
+                完整接口、参数结构和响应模型以 FastAPI 自动生成的 Swagger 为准。需要复制 schema 或生成 SDK 时使用 OpenAPI JSON。
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button asChild variant="outline" className="rounded-xl border-stone-200 bg-white">
+                <a href="/swagger" target="_blank" rel="noreferrer">
+                  <ExternalLink className="size-4" />
+                  打开 Swagger
+                </a>
+              </Button>
+              <Button asChild variant="outline" className="rounded-xl border-stone-200 bg-white">
+                <a href="/openapi.json" target="_blank" rel="noreferrer">
+                  <FileJson className="size-4" />
+                  OpenAPI JSON
+                </a>
+              </Button>
+            </div>
+          </div>
+          <div className="overflow-hidden rounded-2xl border border-stone-200 bg-white">
+            <iframe
+              title="Swagger API Docs"
+              src="/swagger"
+              className="h-[720px] w-full bg-white"
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-2xl border-white/80 bg-white/90 shadow-sm">
+        <CardContent className="space-y-5 p-6">
+          <div className="space-y-1">
+            <h2 className="text-lg font-semibold tracking-tight">接口索引</h2>
+            <p className="text-sm text-stone-500">常用接口按调用场景整理；详细请求体和响应体查看上方 Swagger。</p>
+          </div>
+          <div className="grid gap-4 xl:grid-cols-3">
+            {endpointGroups.map((group) => (
+              <div key={group.name} className="overflow-hidden rounded-2xl border border-stone-200 bg-white">
+                <div className="border-b border-stone-200 bg-stone-50 px-4 py-3 text-sm font-semibold text-stone-900">
+                  {group.name}
+                </div>
+                <div className="divide-y divide-stone-100">
+                  {group.items.map(([method, path, description]) => (
+                    <div key={`${method}-${path}`} className="space-y-1 px-4 py-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="secondary" className="rounded-full px-2 py-0.5 text-[11px]">
+                          {method}
+                        </Badge>
+                        <code className="break-all text-xs font-semibold text-stone-900">{path}</code>
+                      </div>
+                      <p className="text-xs leading-5 text-stone-500">{description}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card className="rounded-2xl border-white/80 bg-white/90 shadow-sm">

@@ -52,6 +52,7 @@ import {
   type Sub2APIRemoteGroup,
   type Sub2APIServer,
 } from "@/lib/api";
+import { IMPORT_PROGRESS_POLL_INTERVAL_MS } from "@/lib/polling";
 
 const PAGE_SIZE_OPTIONS = ["50", "100", "200"] as const;
 
@@ -82,6 +83,7 @@ function normalizeAccounts(items: Sub2APIRemoteAccount[]) {
 export function Sub2APIConnections() {
   const didLoadRef = useRef(false);
   const pollTimerRef = useRef<number | null>(null);
+  const pollInFlightRef = useRef(false);
 
   const [servers, setServers] = useState<Sub2APIServer[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -112,6 +114,11 @@ export function Sub2APIConnections() {
   const [accountPage, setAccountPage] = useState(1);
   const [pageSize, setPageSize] = useState<(typeof PAGE_SIZE_OPTIONS)[number]>("100");
   const [isStartingImport, setIsStartingImport] = useState(false);
+  const hasRunningJobs = useMemo(
+    () =>
+      servers.some((server) => server.import_job?.status === "pending" || server.import_job?.status === "running"),
+    [servers],
+  );
 
   const loadServers = async () => {
     setIsLoading(true);
@@ -134,9 +141,6 @@ export function Sub2APIConnections() {
   }, []);
 
   useEffect(() => {
-    const hasRunningJobs = servers.some(
-      (server) => server.import_job?.status === "pending" || server.import_job?.status === "running",
-    );
     if (!hasRunningJobs) {
       if (pollTimerRef.current !== null) {
         window.clearInterval(pollTimerRef.current);
@@ -146,6 +150,10 @@ export function Sub2APIConnections() {
     }
 
     pollTimerRef.current = window.setInterval(() => {
+      if (pollInFlightRef.current) {
+        return;
+      }
+      pollInFlightRef.current = true;
       void fetchSub2APIServers()
         .then((data) => {
           setServers(data.servers);
@@ -156,8 +164,11 @@ export function Sub2APIConnections() {
             pollTimerRef.current = null;
           }
           toast.error(error instanceof Error ? error.message : "查询导入进度失败");
+        })
+        .finally(() => {
+          pollInFlightRef.current = false;
         });
-    }, 1500);
+    }, IMPORT_PROGRESS_POLL_INTERVAL_MS);
 
     return () => {
       if (pollTimerRef.current !== null) {
@@ -165,7 +176,7 @@ export function Sub2APIConnections() {
         pollTimerRef.current = null;
       }
     };
-  }, [servers]);
+  }, [hasRunningJobs]);
 
   const openAddDialog = () => {
     setEditingServer(null);

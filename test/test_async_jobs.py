@@ -8,6 +8,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+import api.ai as ai_module
 import api.app as app_module
 import api.support as support_module
 from api import create_app
@@ -76,6 +77,73 @@ class _DelayedChatGPTService:
             },
         }
 
+    def stream_image_generation(
+        self,
+        prompt: str,
+        model: str,
+        n: int,
+        size: str | None = None,
+        response_format: str | None = "b64_json",
+        base_url: str | None = None,
+    ):
+        time.sleep(self.delay)
+        self.last_image_generation = {
+            "prompt": prompt,
+            "model": model,
+            "n": n,
+            "size": size,
+            "response_format": response_format,
+            "base_url": base_url,
+            "request_id": None,
+        }
+        yield {
+            "object": "image.generation.result",
+            "created": 1,
+            "model": model,
+            "index": 1,
+            "total": n,
+            "data": [{
+                "url": "/api/view/data/2026-04-25/stream-job-1.png",
+                "thumbnail_url": "/api/view/data/2026-04-25/stream-job-1-thumb.png",
+                "revised_prompt": prompt,
+            }],
+        }
+
+    def stream_image_edit(
+        self,
+        prompt: str,
+        images,
+        model: str,
+        n: int,
+        size: str | None = None,
+        response_format: str | None = "b64_json",
+        base_url: str | None = None,
+    ):
+        image_items = list(images)
+        time.sleep(self.delay)
+        self.last_image_edit = {
+            "prompt": prompt,
+            "model": model,
+            "n": n,
+            "size": size,
+            "response_format": response_format,
+            "base_url": base_url,
+            "request_id": None,
+            "image_count": len(image_items),
+        }
+        yield {
+            "object": "image.generation.result",
+            "created": 1,
+            "model": model,
+            "index": 1,
+            "total": n,
+            "data": [{
+                "url": "/api/view/data/2026-04-25/edit-stream-job-1.png",
+                "thumbnail_url": "/api/view/data/2026-04-25/edit-stream-job-1-thumb.png",
+                "revised_prompt": prompt,
+            }],
+        }
+
     def generate_with_pool(
         self,
         prompt: str,
@@ -121,6 +189,14 @@ class _DelayedChatGPTService:
             "image_count": len(list(images)),
         }
         return {"created": 1, "data": [{"b64_json": "ZmFrZQ==", "revised_prompt": prompt}]}
+
+
+class _AvailableAccountService:
+    def get_available_access_token(self) -> str:
+        return "fake-access-token"
+
+    def has_available_account(self) -> bool:
+        return True
 
 
 class AsyncJobRouteTests(unittest.TestCase):
@@ -667,6 +743,67 @@ class AsyncJobRouteTests(unittest.TestCase):
             finally:
                 support_module.api_key_service = old_support_service
                 app_module.api_key_service = old_app_service
+                job_service.shutdown(wait=False)
+                logger.set_system_log_path(old_system_log_path)
+
+    def test_stream_image_generation_creates_trackable_job(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            api_key_service = APIKeyService(Path(tmp_dir) / "api_keys.json", admin_key_provider=lambda: "chatgpt2api")
+            created = api_key_service.create_key(name="stream-client", allowed_models=["gpt-image-2"])
+            client_key = created["plain_text"]
+            fake_chatgpt_service = _DelayedChatGPTService(delay=0.0)
+            old_system_log_path = logger.system_log_path
+            logger.set_system_log_path(Path(tmp_dir) / "system.log")
+            job_service = JobService(
+                Path(tmp_dir) / "jobs",
+                Path(tmp_dir) / "job_results",
+                fake_chatgpt_service,
+                task_logs_dir=Path(tmp_dir) / "task_logs",
+                max_workers=1,
+            )
+
+            old_support_service = support_module.api_key_service
+            old_app_service = app_module.api_key_service
+            old_ai_account_service = ai_module.account_service
+            try:
+                support_module.api_key_service = api_key_service
+                app_module.api_key_service = api_key_service
+                ai_module.account_service = _AvailableAccountService()
+                client = TestClient(create_app(chatgpt_service=fake_chatgpt_service, job_service=job_service))
+
+                response = client.post(
+                    "/v1/images/generations",
+                    headers={"Authorization": f"Bearer {client_key}"},
+                    json={
+                        "model": "gpt-image-2",
+                        "prompt": "tracked stream image",
+                        "n": 1,
+                        "size": "1:1",
+                        "response_format": "url",
+                        "stream": True,
+                    },
+                )
+
+                self.assertEqual(response.status_code, 200)
+                self.assertIn("data: [DONE]", response.text)
+                self.assertIn("job_id", response.text)
+
+                jobs_response = client.get(
+                    "/api/async/jobs?type=images.generations",
+                    headers={"Authorization": f"Bearer {client_key}"},
+                )
+                self.assertEqual(jobs_response.status_code, 200)
+                payload = jobs_response.json()
+                self.assertEqual(payload["total"], 1)
+                job = payload["items"][0]
+                self.assertEqual(job["status"], "succeeded")
+                self.assertEqual(job["prompt_preview"], "tracked stream image")
+                self.assertEqual(job["result_count"], 1)
+                self.assertEqual(len(job["preview_images"]), 1)
+            finally:
+                support_module.api_key_service = old_support_service
+                app_module.api_key_service = old_app_service
+                ai_module.account_service = old_ai_account_service
                 job_service.shutdown(wait=False)
                 logger.set_system_log_path(old_system_log_path)
 

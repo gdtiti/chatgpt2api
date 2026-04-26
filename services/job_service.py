@@ -349,6 +349,75 @@ class JobService:
         self._executor.submit(self._run_job, str(job["id"]))
         return public_job
 
+    def start_inline_job(self, job_type: str, payload: dict[str, object], principal: AuthPrincipal) -> dict[str, object]:
+        now = _utc_now()
+        model = _clean_text(payload.get("model")) or ("gpt-image-2" if job_type.startswith("images.") else "auto")
+        job = {
+            "id": uuid4().hex,
+            "type": _clean_text(job_type),
+            "status": "running",
+            "model": model,
+            "created_at": now,
+            "updated_at": now,
+            "log_path": "",
+            "api_key_id": principal.key_id,
+            "api_key_name": principal.name,
+            "payload": dict(payload or {}),
+            "error": None,
+        }
+        job["log_path"] = str(self._task_log_file(now, str(job["id"])))
+        with self._lock:
+            self._store_job(job)
+        with logger.task_context(Path(str(job["log_path"]))):
+            logger.info({
+                "event": "inline_job_started",
+                "job_id": job["id"],
+                "job_type": job["type"],
+                "model": job["model"],
+                "api_key_id": job["api_key_id"],
+                "api_key_name": job["api_key_name"],
+                "log_path": job["log_path"],
+            })
+        public_job = self._public_job(job)
+        self.metadata_db.record_task_log(str(job["id"]), str(job["log_path"]))
+        self.metadata_db.record_async_job(public_job, payload=dict(payload or {}))
+        return public_job
+
+    def finish_inline_job(self, job_id: str, result: dict[str, object]) -> None:
+        result_payload = {"result": result}
+        result_file = self._result_file(job_id)
+        self._write_json(result_file, result_payload)
+        succeeded = self._update_job(job_id, status="succeeded", error=None)
+        if succeeded is None:
+            return
+        with logger.task_context(Path(str(succeeded.get("log_path") or self._task_log_file(succeeded.get("created_at"), job_id)))):
+            logger.info({
+                "event": "inline_job_succeeded",
+                "job_id": job_id,
+                "result_count": _count_result_items(result_payload),
+            })
+        self.metadata_db.record_async_job(
+            self._public_job(succeeded, result_payload),
+            payload=dict(succeeded.get("payload") or {}),
+            preview_images=_extract_preview_images(result_payload),
+            result_path=str(result_file),
+        )
+
+    def fail_inline_job(self, job_id: str, error: object) -> None:
+        failed = self._update_job(job_id, status="failed", error={"message": str(error)})
+        if failed is None:
+            return
+        with logger.task_context(Path(str(failed.get("log_path") or self._task_log_file(failed.get("created_at"), job_id)))):
+            logger.error({
+                "event": "inline_job_failed",
+                "job_id": job_id,
+                "error": str(error),
+            })
+        self.metadata_db.record_async_job(
+            self._public_job(failed),
+            payload=dict(failed.get("payload") or {}),
+        )
+
     def list_jobs(
             self,
             principal: AuthPrincipal,

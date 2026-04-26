@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+from collections.abc import Iterator
 from uuid import uuid4
 
 from fastapi import APIRouter, File, Form, Header, HTTPException, Request, UploadFile
@@ -16,6 +18,7 @@ from api.support import (
 )
 from services.account_service import account_service
 from services.chatgpt_service import ChatGPTService, ImageGenerationError
+from services.job_service import JobService
 from utils.helper import is_image_chat_request, responses_sse_stream, sse_json_stream
 
 
@@ -48,7 +51,34 @@ class ResponseCreateRequest(BaseModel):
     stream: bool | None = None
 
 
-def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
+def _tracked_image_stream(
+        *,
+        chunks: Iterator[dict[str, object]],
+        job_service: JobService,
+        job_id: str,
+) -> Iterator[dict[str, object]]:
+    created: int | None = None
+    image_items: list[dict[str, object]] = []
+    try:
+        for chunk in chunks:
+            next_chunk = dict(chunk)
+            next_chunk["job_id"] = job_id
+            if created is None:
+                try:
+                    created = int(next_chunk.get("created") or time.time())
+                except (TypeError, ValueError):
+                    created = int(time.time())
+            data = next_chunk.get("data")
+            if isinstance(data, list):
+                image_items.extend(item for item in data if isinstance(item, dict))
+            yield next_chunk
+        job_service.finish_inline_job(job_id, {"created": created or int(time.time()), "data": image_items})
+    except Exception as exc:
+        job_service.fail_inline_job(job_id, exc)
+        raise
+
+
+def create_router(chatgpt_service: ChatGPTService, job_service: JobService | None = None) -> APIRouter:
     router = APIRouter()
 
     @router.get("/v1/models")
@@ -84,12 +114,29 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
                 await run_in_threadpool(account_service.get_available_access_token)
             except RuntimeError as exc:
                 raise_image_quota_error(exc)
+            chunks = chatgpt_service.stream_image_generation(
+                body.prompt, body.model, body.n, body.size, body.response_format, base_url
+            )
+            if job_service is not None:
+                tracked_job = job_service.start_inline_job(
+                    "images.generations",
+                    {
+                        "model": body.model,
+                        "prompt": body.prompt,
+                        "n": body.n,
+                        "size": body.size,
+                        "response_format": body.response_format,
+                        "stream": True,
+                    },
+                    principal,
+                )
+                chunks = _tracked_image_stream(
+                    chunks=chunks,
+                    job_service=job_service,
+                    job_id=str(tracked_job.get("id") or ""),
+                )
             return StreamingResponse(
-                sse_json_stream(
-                    chatgpt_service.stream_image_generation(
-                        body.prompt, body.model, body.n, body.size, body.response_format, base_url
-                    )
-                ),
+                sse_json_stream(chunks),
                 media_type="text/event-stream",
             )
         try:
@@ -138,8 +185,28 @@ def create_router(chatgpt_service: ChatGPTService) -> APIRouter:
         if stream:
             if not account_service.has_available_account():
                 raise_image_quota_error(RuntimeError("no available image quota"))
+            chunks = chatgpt_service.stream_image_edit(prompt, images, model, n, size, response_format, base_url)
+            if job_service is not None:
+                tracked_job = job_service.start_inline_job(
+                    "images.edits",
+                    {
+                        "model": model,
+                        "prompt": prompt,
+                        "n": n,
+                        "size": size,
+                        "response_format": response_format,
+                        "stream": True,
+                        "images": ["uploaded"] * len(images),
+                    },
+                    principal,
+                )
+                chunks = _tracked_image_stream(
+                    chunks=chunks,
+                    job_service=job_service,
+                    job_id=str(tracked_job.get("id") or ""),
+                )
             return StreamingResponse(
-                sse_json_stream(chatgpt_service.stream_image_edit(prompt, images, model, n, size, response_format, base_url)),
+                sse_json_stream(chunks),
                 media_type="text/event-stream",
             )
         try:

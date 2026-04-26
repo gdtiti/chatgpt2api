@@ -166,7 +166,7 @@ def create_app(
             except Exception:
                 pass
 
-    app.include_router(ai.create_router(chatgpt_service))
+    app.include_router(ai.create_router(chatgpt_service, job_service))
     app.include_router(catalog.create_router(chatgpt_service))
     app.include_router(async_jobs.create_router(job_service))
     app.include_router(admin_keys.create_router(api_key_service))

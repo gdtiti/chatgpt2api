@@ -637,11 +637,16 @@ export async function streamAsyncJobEvents(
   };
 
   while (true) {
-    const { done, value } = await reader.read();
-    if (done) {
+    let chunk: ReadableStreamReadResult<Uint8Array>;
+    try {
+      chunk = await reader.read();
+    } catch (error) {
+      throw new Error(error instanceof Error ? error.message : "SSE 连接已中断");
+    }
+    if (chunk.done) {
       break;
     }
-    buffer += decoder.decode(value, { stream: true });
+    buffer += decoder.decode(chunk.value, { stream: true });
     const chunks = buffer.split(/\r?\n\r?\n/);
     buffer = chunks.pop() || "";
     chunks.forEach(emitEvent);

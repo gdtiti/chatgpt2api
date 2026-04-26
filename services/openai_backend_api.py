@@ -584,6 +584,31 @@ class OpenAIBackendAPI:
                     sediment_ids.append(sediment_id)
         return {"conversation_id": conversation_id, "file_ids": file_ids, "sediment_ids": sediment_ids}
 
+    @staticmethod
+    def _extract_image_ids_from_value(value: Any) -> tuple[list[str], list[str]]:
+        file_ids: list[str] = []
+        sediment_ids: list[str] = []
+
+        def visit(candidate: Any) -> None:
+            if isinstance(candidate, str):
+                for hit in re.findall(r"(?:file-service://)?(file[-_][A-Za-z0-9_-]+)", candidate):
+                    if hit not in file_ids:
+                        file_ids.append(hit)
+                for hit in re.findall(r"sediment://([A-Za-z0-9_-]+)", candidate):
+                    if hit not in sediment_ids:
+                        sediment_ids.append(hit)
+                return
+            if isinstance(candidate, list):
+                for item in candidate:
+                    visit(item)
+                return
+            if isinstance(candidate, dict):
+                for item in candidate.values():
+                    visit(item)
+
+        visit(value)
+        return file_ids, sediment_ids
+
     def _get_conversation(self, conversation_id: str) -> Dict[str, Any]:
         """获取完整 conversation 详情。"""
         path = f"/backend-api/conversation/{conversation_id}"
@@ -607,22 +632,32 @@ class OpenAIBackendAPI:
             author = message.get("author") or {}
             metadata = message.get("metadata") or {}
             content = message.get("content") or {}
-            if author.get("role") != "tool":
+            role = str(author.get("role") or "").strip().lower()
+            if role not in {"tool", "assistant"}:
                 continue
-            if metadata.get("async_task_type") != "image_gen":
+            is_image_tool_record = (
+                    role == "tool"
+                    and metadata.get("async_task_type") == "image_gen"
+                    and content.get("content_type") == "multimodal_text"
+            )
+            if is_image_tool_record:
+                file_ids, sediment_ids = [], []
+                for part in content.get("parts") or []:
+                    text = (part.get("asset_pointer") or "") if isinstance(part, dict) else (
+                        part if isinstance(part, str) else "")
+                    for hit in file_pat.findall(text):
+                        if hit not in file_ids:
+                            file_ids.append(hit)
+                    for hit in sed_pat.findall(text):
+                        if hit not in sediment_ids:
+                            sediment_ids.append(hit)
+            else:
+                file_ids, sediment_ids = self._extract_image_ids_from_value({
+                    "content": content,
+                    "metadata": metadata,
+                })
+            if not file_ids and not sediment_ids:
                 continue
-            if content.get("content_type") != "multimodal_text":
-                continue
-            file_ids, sediment_ids = [], []
-            for part in content.get("parts") or []:
-                text = (part.get("asset_pointer") or "") if isinstance(part, dict) else (
-                    part if isinstance(part, str) else "")
-                for hit in file_pat.findall(text):
-                    if hit not in file_ids:
-                        file_ids.append(hit)
-                for hit in sed_pat.findall(text):
-                    if hit not in sediment_ids:
-                        sediment_ids.append(hit)
             records.append(
                 {"message_id": message_id, "create_time": message.get("create_time") or 0, "file_ids": file_ids,
                  "sediment_ids": sediment_ids})
@@ -760,13 +795,25 @@ class OpenAIBackendAPI:
         if response_format not in {"url", "b64_json"}:
             raise ValueError("response_format must be 'url' or 'b64_json'")
         data = []
+        errors: list[str] = []
         for url in urls:
-            response = self._image_request("GET", url, timeout=120)
-            ensure_ok(response, "image_download")
+            try:
+                response = self._image_request("GET", url, timeout=120)
+                ensure_ok(response, "image_download")
+            except Exception as exc:
+                errors.append(str(exc))
+                logger.warning({
+                    "event": "image_download_item_failed",
+                    "url": url,
+                    "error": str(exc),
+                })
+                continue
             if response_format == "b64_json":
                 data.append({"b64_json": base64.b64encode(response.content).decode()})
             else:
                 data.append({"url": self._save_image_bytes(response.content)})
+        if not data and errors:
+            raise RuntimeError(errors[-1])
         return {"created": int(time.time()), "data": data}
 
     def _run_image_task(self, prompt: str, model: str, size: str | None, images: Optional[list[str]] = None,

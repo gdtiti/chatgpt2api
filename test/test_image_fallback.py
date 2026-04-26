@@ -145,6 +145,34 @@ class ImageFallbackTests(unittest.TestCase):
             release_slow.set()
             slow_completed.wait(timeout=1.0)
 
+    def test_requested_n_keeps_successful_slots_when_one_slot_fails(self) -> None:
+        config.data.update(
+            {
+                "image_failure_strategy": "fail",
+                "image_parallel_attempts": 1,
+            }
+        )
+        service = ChatGPTService(_FakeAccountService())
+
+        def operation(_prompt, _model, _size, _response_format, _base_url, _request_id, slot_index, _quality=None):
+            if slot_index == 2:
+                raise ImageGenerationError("no downloadable image result found")
+            encoded = base64.b64encode(f"slot-{slot_index}".encode("ascii")).decode("ascii")
+            return {"created": 1, "data": [{"b64_json": encoded, "revised_prompt": f"prompt-{slot_index}"}]}
+
+        service._call_image_generation_once = operation
+
+        result = service.generate_with_pool("prompt", "gpt-image-2", 3)
+
+        self.assertEqual(len(result["data"]), 2)
+        self.assertCountEqual(
+            [item["b64_json"] for item in result["data"]],
+            [
+                base64.b64encode(b"slot-1").decode("ascii"),
+                base64.b64encode(b"slot-3").decode("ascii"),
+            ],
+        )
+
     def test_url_response_format_returns_relative_view_path_when_base_url_not_set(self) -> None:
         config.data.update(
             {

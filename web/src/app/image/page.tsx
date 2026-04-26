@@ -9,6 +9,8 @@ import { ImageSidebar } from "@/app/image/components/image-sidebar";
 import { ImageLightbox } from "@/components/image-lightbox";
 import {
   createAsyncJob,
+  fetchAsyncJob,
+  fetchAsyncJobResult,
   fetchAuthSession,
   fetchAccounts,
   fetchModelCatalog,
@@ -44,6 +46,8 @@ const ACTIVE_CONVERSATION_STORAGE_KEY = "chatgpt2api:image_active_conversation_i
 const activeConversationQueueIds = new Set<string>();
 const CUSTOM_SIZE_VALUE = "__custom__";
 const DEFAULT_IMAGE_MODELS = ["auto", "gpt-image-2", "codex-gpt-image-2"];
+const SSE_RESULT_RECOVERY_ATTEMPTS = 12;
+const SSE_RESULT_RECOVERY_INTERVAL_MS = 1500;
 
 function buildConversationTitle(prompt: string) {
   const trimmed = prompt.trim();
@@ -124,6 +128,10 @@ function resolveImageUrlFileName(url: string, fallback: string) {
   }
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 function buildReferenceImageFromResult(image: StoredImage, fileName: string): StoredReferenceImage | null {
   if (!image.b64_json) {
     return null;
@@ -201,27 +209,58 @@ function buildTurnImagesFromResult(turn: ImageTurn, result: unknown): { images: 
       ? (result as { data: Array<Record<string, unknown>> }).data
       : [];
 
-  const successImages = data
-    .map((item, index) => normalizeStoredImageResult(item, turn.images[index]?.id || `${turn.id}-${index}`))
-    .filter((item): item is StoredImage => item !== null);
-
-  if (successImages.length > 0) {
+  const images = turn.images.map((image, index) => {
+    const normalized = normalizeStoredImageResult(data[index], image.id);
+    if (normalized) {
+      return normalized;
+    }
     return {
-      images: successImages,
-      failedCount: 0,
+      id: image.id,
+      status: "error" as const,
+      error: "未返回图片数据",
+    };
+  });
+  const successCount = images.filter((item) => item.status === "success").length;
+
+  if (successCount > 0) {
+    return {
+      images,
+      failedCount: images.length - successCount,
     };
   }
-
-  const images = turn.images.map((image) => ({
-    id: image.id,
-    status: "error" as const,
-    error: "未返回图片数据",
-  }));
 
   return {
     images,
     failedCount: images.filter((item) => item.status === "error").length,
   };
+}
+
+async function recoverAsyncJobResult(jobId: string, fallbackError: string): Promise<unknown> {
+  let lastError = fallbackError;
+  for (let attempt = 0; attempt < SSE_RESULT_RECOVERY_ATTEMPTS; attempt += 1) {
+    try {
+      const response = await fetchAsyncJobResult(jobId);
+      if (response.result !== null && response.result !== undefined) {
+        return response.result;
+      }
+      lastError = "异步任务结果为空";
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : lastError;
+    }
+
+    const statusResponse = await fetchAsyncJob(jobId).catch((error) => {
+      if (error instanceof Error && error.message && error.message !== lastError) {
+        lastError = error.message;
+      }
+      return null;
+    });
+    if (statusResponse?.job.status === "failed") {
+      throw new Error(statusResponse.job.error?.message || fallbackError || "异步任务失败");
+    }
+
+    await sleep(SSE_RESULT_RECOVERY_INTERVAL_MS);
+  }
+  throw new Error(lastError || fallbackError || "SSE 连接已中断，且未能补拉任务结果");
 }
 
 async function recoverConversationHistory(items: ImageConversation[]) {
@@ -843,21 +882,25 @@ export default function ImagePage() {
         let finalResult: unknown = null;
         let finalError = "";
 
-        await streamAsyncJobEvents(createdJob.job.id, {
-          onEvent: (event, payload) => {
-            if (event === "result" && payload && typeof payload === "object") {
-              finalResult = (payload as { result?: unknown }).result;
-            }
-            if (event === "error" && payload && typeof payload === "object") {
-              const directError = (payload as { error?: string }).error;
-              const jobError = (payload as { job?: { error?: { message?: string } } }).job?.error?.message;
-              finalError = String(jobError || directError || "异步任务失败");
-            }
-          },
-        });
+        try {
+          await streamAsyncJobEvents(createdJob.job.id, {
+            onEvent: (event, payload) => {
+              if (event === "result" && payload && typeof payload === "object") {
+                finalResult = (payload as { result?: unknown }).result;
+              }
+              if (event === "error" && payload && typeof payload === "object") {
+                const directError = (payload as { error?: string }).error;
+                const jobError = (payload as { job?: { error?: { message?: string } } }).job?.error?.message;
+                finalError = String(jobError || directError || "异步任务失败");
+              }
+            },
+          });
+        } catch (error) {
+          finalError = error instanceof Error ? error.message : "SSE 连接已中断";
+        }
 
         if (finalResult === null) {
-          throw new Error(finalError || "异步任务失败");
+          finalResult = await recoverAsyncJobResult(createdJob.job.id, finalError || "异步任务失败");
         }
 
         await updateConversation(conversationId, (current) => {

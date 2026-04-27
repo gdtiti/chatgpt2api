@@ -5,9 +5,12 @@ IMAGE_NAME="${IMAGE_NAME:-chatgpt2api}"
 IMAGE_NAMESPACE="${IMAGE_NAMESPACE:-gdttiti}"
 IMAGE_REPOSITORY="${IMAGE_REPOSITORY:-${IMAGE_NAMESPACE}/${IMAGE_NAME}}"
 EXTERNAL_REGISTRIES="${EXTERNAL_REGISTRIES:-docker.10fu.com dockerhub.10fu.com}"
+EXTERNAL_REGISTRIES_REQUIRED="${EXTERNAL_REGISTRIES_REQUIRED:-0}"
 ARCHES="${ARCHES:-amd64 arm64}"
 BUILD_CONTEXT="${BUILD_CONTEXT:-.}"
 BUILD_TARGET="${BUILD_TARGET:-app}"
+ACTIVE_EXTERNAL_REGISTRIES=""
+SKIPPED_EXTERNAL_REGISTRIES=""
 
 required_env() {
     name="$1"
@@ -70,6 +73,23 @@ unique_words() {
     done
 }
 
+append_word() {
+    current="$1"
+    item="$2"
+    if [ -z "$current" ]; then
+        printf '%s' "$item"
+    else
+        printf '%s %s' "$current" "$item"
+    fi
+}
+
+is_truthy() {
+    case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+        1|true|yes|on) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 is_tag_build() {
     [ "${CNB_EVENT:-}" = "tag_push" ] || [ "${CNB_BRANCH_TYPE:-}" = "tag" ]
 }
@@ -121,10 +141,7 @@ registry_username_var() {
     case "$1" in
         docker.10fu.com) printf '%s' "DOCKER_10FU_USERNAME" ;;
         dockerhub.10fu.com) printf '%s' "DOCKERHUB_10FU_USERNAME" ;;
-        *)
-            echo "No credential variable mapping for registry: $1" >&2
-            exit 1
-            ;;
+        *) return 1 ;;
     esac
 }
 
@@ -132,10 +149,7 @@ registry_password_var() {
     case "$1" in
         docker.10fu.com) printf '%s' "DOCKER_10FU_PASSWORD" ;;
         dockerhub.10fu.com) printf '%s' "DOCKERHUB_10FU_PASSWORD" ;;
-        *)
-            echo "No credential variable mapping for registry: $1" >&2
-            exit 1
-            ;;
+        *) return 1 ;;
     esac
 }
 
@@ -150,10 +164,38 @@ login_skopeo_registry() {
     fi
 }
 
+mark_skipped_registry() {
+    registry="$1"
+    reason="$2"
+    message="Skipping mirror registry ${registry}: ${reason}"
+    if is_truthy "$EXTERNAL_REGISTRIES_REQUIRED"; then
+        echo "$message" >&2
+        exit 1
+    fi
+    echo "$message"
+    SKIPPED_EXTERNAL_REGISTRIES="$(append_word "$SKIPPED_EXTERNAL_REGISTRIES" "$registry")"
+}
+
+prepare_external_registries() {
+    for registry in $EXTERNAL_REGISTRIES; do
+        if ! username_var="$(registry_username_var "$registry")" || ! password_var="$(registry_password_var "$registry")"; then
+            mark_skipped_registry "$registry" "no credential variable mapping"
+            continue
+        fi
+        eval "username=\${$username_var:-}"
+        eval "password=\${$password_var:-}"
+        if [ -z "$username" ] || [ -z "$password" ]; then
+            mark_skipped_registry "$registry" "missing ${username_var} or ${password_var}"
+            continue
+        fi
+        ACTIVE_EXTERNAL_REGISTRIES="$(append_word "$ACTIVE_EXTERNAL_REGISTRIES" "$registry")"
+    done
+}
+
 copy_tag_to_mirrors() {
     tag="$1"
     source_image="$2"
-    for registry in $EXTERNAL_REGISTRIES; do
+    for registry in $ACTIVE_EXTERNAL_REGISTRIES; do
         mirror_image="${registry}/${IMAGE_REPOSITORY}"
         echo "Syncing ${source_image}:${tag} -> ${mirror_image}:${tag}"
         skopeo_cmd copy --all --insecure-policy "docker://${source_image}:${tag}" "docker://${mirror_image}:${tag}"
@@ -180,8 +222,12 @@ print_publish_summary() {
     source_image="$1"
     echo "===== CNB Image Publish Summary ====="
     print_summary_for_image "CNB Artifact" "$source_image"
-    for registry in $EXTERNAL_REGISTRIES; do
+    for registry in $ACTIVE_EXTERNAL_REGISTRIES; do
         print_summary_for_image "Mirror" "${registry}/${IMAGE_REPOSITORY}"
+    done
+    for registry in $SKIPPED_EXTERNAL_REGISTRIES; do
+        echo "[Mirror skipped] ${registry}/${IMAGE_REPOSITORY}"
+        echo "  reason: missing credentials or unsupported registry mapping"
     done
     echo "====================================="
 }
@@ -199,16 +245,20 @@ else
     printf '%s' "$CNB_TOKEN" | docker_cmd login "$CNB_DOCKER_REGISTRY" -u "$CNB_TOKEN_USER_NAME" --password-stdin
 fi
 
-ensure_skopeo
-login_skopeo_registry "$CNB_DOCKER_REGISTRY" "$CNB_TOKEN_USER_NAME" "$CNB_TOKEN"
+prepare_external_registries
 
-for registry in $EXTERNAL_REGISTRIES; do
+if [ -n "$ACTIVE_EXTERNAL_REGISTRIES" ]; then
+    ensure_skopeo
+    login_skopeo_registry "$CNB_DOCKER_REGISTRY" "$CNB_TOKEN_USER_NAME" "$CNB_TOKEN"
+else
+    echo "No external mirror registries are active; only CNB Artifact will be published."
+fi
+
+for registry in $ACTIVE_EXTERNAL_REGISTRIES; do
     username_var="$(registry_username_var "$registry")"
     password_var="$(registry_password_var "$registry")"
-    required_env "$username_var"
-    required_env "$password_var"
-    eval "username=\${$username_var}"
-    eval "password=\${$password_var}"
+    eval "username=\${$username_var:-}"
+    eval "password=\${$password_var:-}"
     login_skopeo_registry "$registry" "$username" "$password"
 done
 

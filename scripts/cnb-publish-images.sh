@@ -48,8 +48,7 @@ is_tag_build() {
     [ "${CNB_EVENT:-}" = "tag_push" ] || [ "${CNB_BRANCH_TYPE:-}" = "tag" ]
 }
 
-tags_for_arch() {
-    arch="$1"
+base_tags() {
     if is_tag_build; then
         raw_tag="$(sanitize_tag "${CNB_BRANCH:-${CNB_TAG:-release}}")"
         version="${raw_tag#v}"
@@ -62,15 +61,22 @@ tags_for_arch() {
                 ;;
         esac
         if [ -n "$major_minor" ]; then
-            unique_words "${raw_tag}-${arch}" "${version}-${arch}" "${major_minor}-${arch}"
+            unique_words "$raw_tag" "$version" "$major_minor"
         else
-            unique_words "${raw_tag}-${arch}" "${version}-${arch}"
+            unique_words "$raw_tag" "$version"
         fi
     else
         branch="$(sanitize_tag "${CNB_BRANCH:-main}")"
         commit_short="$(sanitize_tag "${CNB_COMMIT_SHORT:-${CNB_COMMIT:-manual}}")"
-        unique_words "latest-${arch}" "${branch}-${arch}" "${commit_short}-${arch}"
+        unique_words "latest" "$branch" "$commit_short"
     fi
+}
+
+tags_for_arch() {
+    arch="$1"
+    for tag in $(base_tags); do
+        printf '%s-%s\n' "$tag" "$arch"
+    done
 }
 
 platform_for_arch() {
@@ -135,6 +141,37 @@ fi
 for registry in $EXTERNAL_REGISTRIES; do
     login_registry "$registry"
 done
+
+multi_arch_platforms=""
+for arch in $ARCHES; do
+    platform="$(platform_for_arch "$arch")"
+    if [ -z "$multi_arch_platforms" ]; then
+        multi_arch_platforms="$platform"
+    else
+        multi_arch_platforms="${multi_arch_platforms},${platform}"
+    fi
+done
+
+multi_arch_tag_args=""
+for tag in $(base_tags); do
+    multi_arch_tag_args="${multi_arch_tag_args} -t ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:${tag}"
+    for registry in $EXTERNAL_REGISTRIES; do
+        multi_arch_tag_args="${multi_arch_tag_args} -t ${registry}/${IMAGE_REPOSITORY}:${tag}"
+    done
+done
+
+echo "Building and pushing multi-arch image tags for ${multi_arch_platforms}:"
+for tag in $(base_tags); do
+    echo "  - ${tag}"
+done
+
+# shellcheck disable=SC2086
+docker_cmd buildx build \
+    --platform "$multi_arch_platforms" \
+    --target app \
+    --push \
+    $multi_arch_tag_args \
+    .
 
 for arch in $ARCHES; do
     platform="$(platform_for_arch "$arch")"

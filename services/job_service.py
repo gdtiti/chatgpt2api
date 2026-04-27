@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import re
 from threading import Lock
 from typing import Any
 from uuid import uuid4
@@ -154,6 +155,27 @@ def _preview_image_from_item(item: dict[str, object], index: int) -> dict[str, o
     return ensure_preview_image_metadata(preview, base_url=config.base_url or None)
 
 
+def _preview_images_from_markdown(markdown: str, start_index: int = 1) -> list[dict[str, object]]:
+    previews: list[dict[str, object]] = []
+    for index, match in enumerate(re.finditer(r"!\[[^\]]*\]\(([^)]+)\)", markdown or ""), start=start_index):
+        src = _clean_text(match.group(1))
+        if not src:
+            continue
+        previews.append(
+            ensure_preview_image_metadata(
+                {
+                    "id": f"preview-{index}",
+                    "src": src,
+                    "url": src if _is_probable_image_url(src) and not src.startswith("data:image/") else None,
+                    "thumbnail_url": src if _is_probable_image_url(src) and not src.startswith("data:image/") else None,
+                    "markdown": match.group(0),
+                },
+                base_url=config.base_url or None,
+            )
+        )
+    return previews
+
+
 def _extract_preview_images(result: dict[str, object] | None) -> list[dict[str, object]]:
     if not isinstance(result, dict):
         return []
@@ -173,6 +195,19 @@ def _extract_preview_images(result: dict[str, object] | None) -> list[dict[str, 
                 continue
             if (preview := _preview_image_from_item(item, index)) is not None:
                 previews.append(preview)
+    choices = payload.get("choices")
+    if isinstance(choices, list):
+        next_index = len(previews) + 1
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            message = choice.get("message")
+            if not isinstance(message, dict):
+                continue
+            markdown = _clean_text(message.get("content"))
+            extracted = _preview_images_from_markdown(markdown, next_index)
+            previews.extend(extracted)
+            next_index += len(extracted)
     return previews
 
 
@@ -350,7 +385,14 @@ class JobService:
         self._executor.submit(self._run_job, str(job["id"]))
         return public_job
 
-    def start_inline_job(self, job_type: str, payload: dict[str, object], principal: AuthPrincipal) -> dict[str, object]:
+    def start_inline_job(
+            self,
+            job_type: str,
+            payload: dict[str, object],
+            principal: AuthPrincipal,
+            *,
+            include_task_tracking: bool = True,
+    ) -> dict[str, object]:
         now = _utc_now()
         model = _clean_text(payload.get("model")) or ("gpt-image-2" if job_type.startswith("images.") else "auto")
         job = {
@@ -365,6 +407,7 @@ class JobService:
             "api_key_name": principal.name,
             "payload": dict(payload or {}),
             "error": None,
+            "include_task_tracking": bool(include_task_tracking),
         }
         job["log_path"] = str(self._task_log_file(now, str(job["id"])))
         with self._lock:
@@ -381,10 +424,21 @@ class JobService:
             })
         public_job = self._public_job(job)
         self.metadata_db.record_task_log(str(job["id"]), str(job["log_path"]))
-        self.metadata_db.record_async_job(public_job, payload=dict(payload or {}))
+        self.metadata_db.record_async_job(
+            public_job,
+            payload=dict(payload or {}),
+            include_task_tracking=include_task_tracking,
+        )
         return public_job
 
-    def finish_inline_job(self, job_id: str, result: dict[str, object]) -> None:
+    def finish_inline_job(
+            self,
+            job_id: str,
+            result: dict[str, object],
+            *,
+            include_gallery: bool = True,
+            include_waterfall: bool = True,
+    ) -> None:
         result_payload = {"result": result}
         result_file = self._result_file(job_id)
         self._write_json(result_file, result_payload)
@@ -402,6 +456,9 @@ class JobService:
             payload=dict(succeeded.get("payload") or {}),
             preview_images=_extract_preview_images(result_payload),
             result_path=str(result_file),
+            include_task_tracking=bool(succeeded.get("include_task_tracking", True)),
+            include_gallery=include_gallery,
+            include_waterfall=include_waterfall,
         )
 
     def fail_inline_job(self, job_id: str, error: object) -> None:
@@ -417,6 +474,7 @@ class JobService:
         self.metadata_db.record_async_job(
             self._public_job(failed),
             payload=dict(failed.get("payload") or {}),
+            include_task_tracking=bool(failed.get("include_task_tracking", True)),
         )
 
     def list_jobs(
@@ -473,7 +531,7 @@ class JobService:
         return jobs
 
     def _backfill_metadata_if_empty(self, principal: AuthPrincipal) -> None:
-        if self.metadata_db.has_async_jobs(is_admin=principal.is_admin, api_key_id=principal.key_id):
+        if self.metadata_db.has_any_async_job_records(is_admin=principal.is_admin, api_key_id=principal.key_id):
             return
         scope_key = "*" if principal.is_admin else principal.key_id
         if scope_key in self._metadata_backfill_attempted_scopes:

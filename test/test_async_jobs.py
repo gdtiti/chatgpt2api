@@ -28,16 +28,37 @@ class _DelayedChatGPTService:
 
     def create_chat_completion(self, payload: dict[str, object]) -> dict[str, object]:
         time.sleep(self.delay)
+        if str(payload.get("model") or "").strip() == "gpt-image-2":
+            content = "![generated](/api/view/data/2026-04-25/chat-image-1.png)"
+        else:
+            content = "done"
         return {
             "id": "chatcmpl_async",
             "object": "chat.completion",
             "created": 1,
             "model": payload.get("model") or "auto",
-            "choices": [{"index": 0, "message": {"role": "assistant", "content": "done"}, "finish_reason": "stop"}],
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": "stop"}],
         }
 
     def create_response(self, payload: dict[str, object]) -> dict[str, object]:
         time.sleep(self.delay)
+        tools = payload.get("tools")
+        if isinstance(tools, list) and any(
+                isinstance(tool, dict) and str(tool.get("type") or "").strip() == "image_generation"
+                for tool in tools
+        ):
+            return {
+                "id": "resp_async",
+                "object": "response",
+                "output": [{
+                    "id": "ig_1",
+                    "type": "image_generation_call",
+                    "status": "completed",
+                    "result": "/api/view/data/2026-04-25/response-image-1.png",
+                    "url": "/api/view/data/2026-04-25/response-image-1.png",
+                    "thumbnail_url": "/api/view/data/2026-04-25/response-image-1-thumb.png",
+                }],
+            }
         return {"id": "resp_async", "object": "response", "output": []}
 
     def stream_response(self, payload: dict[str, object]):
@@ -810,6 +831,240 @@ class AsyncJobRouteTests(unittest.TestCase):
                 support_module.api_key_service = old_support_service
                 app_module.api_key_service = old_app_service
                 ai_module.account_service = old_ai_account_service
+                job_service.shutdown(wait=False)
+                logger.set_system_log_path(old_system_log_path)
+
+    def test_non_stream_openai_image_api_creates_task_gallery_and_waterfall_records(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            api_key_service = APIKeyService(Path(tmp_dir) / "api_keys.json", admin_key_provider=lambda: "chatgpt2api")
+            created = api_key_service.create_key(name="sync-client", allowed_models=["gpt-image-2"])
+            client_key = created["plain_text"]
+            fake_chatgpt_service = _DelayedChatGPTService(delay=0.0)
+            old_system_log_path = logger.system_log_path
+            logger.set_system_log_path(Path(tmp_dir) / "system.log")
+            job_service = JobService(
+                Path(tmp_dir) / "jobs",
+                Path(tmp_dir) / "job_results",
+                fake_chatgpt_service,
+                task_logs_dir=Path(tmp_dir) / "task_logs",
+                max_workers=1,
+            )
+
+            old_support_service = support_module.api_key_service
+            old_app_service = app_module.api_key_service
+            try:
+                support_module.api_key_service = api_key_service
+                app_module.api_key_service = api_key_service
+                client = TestClient(create_app(chatgpt_service=fake_chatgpt_service, job_service=job_service))
+
+                response = client.post(
+                    "/v1/images/generations",
+                    headers={"Authorization": f"Bearer {client_key}"},
+                    json={
+                        "model": "gpt-image-2",
+                        "prompt": "sync tracked image",
+                        "n": 1,
+                        "size": "1:1",
+                        "response_format": "b64_json",
+                    },
+                )
+
+                self.assertEqual(response.status_code, 200)
+                self.assertIsNotNone(fake_chatgpt_service.last_image_generation)
+                tracked_request_id = fake_chatgpt_service.last_image_generation["request_id"]
+                self.assertTrue(tracked_request_id)
+
+                jobs_response = client.get(
+                    "/api/async/jobs?type=images.generations",
+                    headers={"Authorization": f"Bearer {client_key}"},
+                )
+                self.assertEqual(jobs_response.status_code, 200)
+                jobs_payload = jobs_response.json()
+                self.assertEqual(jobs_payload["total"], 1)
+                self.assertEqual(jobs_payload["items"][0]["id"], tracked_request_id)
+                self.assertEqual(jobs_payload["items"][0]["status"], "succeeded")
+
+                gallery_response = client.get("/api/gallery", headers={"Authorization": f"Bearer {client_key}"})
+                self.assertEqual(gallery_response.status_code, 200)
+                self.assertEqual(gallery_response.json()["total"], 1)
+
+                wall_response = client.get("/api/gallery/wall", headers={"Authorization": f"Bearer {client_key}"})
+                self.assertEqual(wall_response.status_code, 200)
+                self.assertEqual(wall_response.json()["total"], 1)
+            finally:
+                support_module.api_key_service = old_support_service
+                app_module.api_key_service = old_app_service
+                job_service.shutdown(wait=False)
+                logger.set_system_log_path(old_system_log_path)
+
+    def test_non_stream_chat_image_api_creates_task_gallery_and_waterfall_records(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            api_key_service = APIKeyService(Path(tmp_dir) / "api_keys.json", admin_key_provider=lambda: "chatgpt2api")
+            created = api_key_service.create_key(name="chat-image-client", allowed_models=["gpt-image-2"])
+            client_key = created["plain_text"]
+            fake_chatgpt_service = _DelayedChatGPTService(delay=0.0)
+            old_system_log_path = logger.system_log_path
+            logger.set_system_log_path(Path(tmp_dir) / "system.log")
+            job_service = JobService(
+                Path(tmp_dir) / "jobs",
+                Path(tmp_dir) / "job_results",
+                fake_chatgpt_service,
+                task_logs_dir=Path(tmp_dir) / "task_logs",
+                max_workers=1,
+            )
+
+            old_support_service = support_module.api_key_service
+            old_app_service = app_module.api_key_service
+            try:
+                support_module.api_key_service = api_key_service
+                app_module.api_key_service = api_key_service
+                client = TestClient(create_app(chatgpt_service=fake_chatgpt_service, job_service=job_service))
+
+                response = client.post(
+                    "/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {client_key}"},
+                    json={
+                        "model": "gpt-image-2",
+                        "messages": [{"role": "user", "content": "draw from chat"}],
+                    },
+                )
+
+                self.assertEqual(response.status_code, 200)
+
+                jobs_response = client.get(
+                    "/api/async/jobs?type=chat.completions",
+                    headers={"Authorization": f"Bearer {client_key}"},
+                )
+                self.assertEqual(jobs_response.status_code, 200)
+                self.assertEqual(jobs_response.json()["total"], 1)
+
+                gallery_response = client.get("/api/gallery", headers={"Authorization": f"Bearer {client_key}"})
+                self.assertEqual(gallery_response.status_code, 200)
+                self.assertEqual(gallery_response.json()["total"], 1)
+
+                wall_response = client.get("/api/gallery/wall", headers={"Authorization": f"Bearer {client_key}"})
+                self.assertEqual(wall_response.status_code, 200)
+                self.assertEqual(wall_response.json()["total"], 1)
+            finally:
+                support_module.api_key_service = old_support_service
+                app_module.api_key_service = old_app_service
+                job_service.shutdown(wait=False)
+                logger.set_system_log_path(old_system_log_path)
+
+    def test_responses_compat_tracking_only_applies_to_image_generation_tools(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            api_key_service = APIKeyService(Path(tmp_dir) / "api_keys.json", admin_key_provider=lambda: "chatgpt2api")
+            fake_chatgpt_service = _DelayedChatGPTService(delay=0.0)
+            old_system_log_path = logger.system_log_path
+            logger.set_system_log_path(Path(tmp_dir) / "system.log")
+            job_service = JobService(
+                Path(tmp_dir) / "jobs",
+                Path(tmp_dir) / "job_results",
+                fake_chatgpt_service,
+                task_logs_dir=Path(tmp_dir) / "task_logs",
+                max_workers=1,
+            )
+
+            old_support_service = support_module.api_key_service
+            old_app_service = app_module.api_key_service
+            try:
+                support_module.api_key_service = api_key_service
+                app_module.api_key_service = api_key_service
+                client = TestClient(create_app(chatgpt_service=fake_chatgpt_service, job_service=job_service))
+
+                text_tool_response = client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer chatgpt2api"},
+                    json={"input": "search", "tools": [{"type": "web_search"}]},
+                )
+                self.assertEqual(text_tool_response.status_code, 200)
+
+                jobs_response = client.get(
+                    "/api/async/jobs?type=responses",
+                    headers={"Authorization": "Bearer chatgpt2api"},
+                )
+                self.assertEqual(jobs_response.status_code, 200)
+                self.assertEqual(jobs_response.json()["total"], 0)
+
+                image_tool_response = client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer chatgpt2api"},
+                    json={"input": "draw", "tools": [{"type": "image_generation"}]},
+                )
+                self.assertEqual(image_tool_response.status_code, 200)
+
+                jobs_response = client.get(
+                    "/api/async/jobs?type=responses",
+                    headers={"Authorization": "Bearer chatgpt2api"},
+                )
+                self.assertEqual(jobs_response.status_code, 200)
+                self.assertEqual(jobs_response.json()["total"], 1)
+
+                gallery_response = client.get("/api/gallery", headers={"Authorization": "Bearer chatgpt2api"})
+                self.assertEqual(gallery_response.status_code, 200)
+                self.assertEqual(gallery_response.json()["total"], 1)
+            finally:
+                support_module.api_key_service = old_support_service
+                app_module.api_key_service = old_app_service
+                job_service.shutdown(wait=False)
+                logger.set_system_log_path(old_system_log_path)
+
+    def test_openai_image_api_tracking_visibility_settings_are_respected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            api_key_service = APIKeyService(Path(tmp_dir) / "api_keys.json", admin_key_provider=lambda: "chatgpt2api")
+            created = api_key_service.create_key(name="visibility-client", allowed_models=["gpt-image-2"])
+            client_key = created["plain_text"]
+            fake_chatgpt_service = _DelayedChatGPTService(delay=0.0)
+            old_system_log_path = logger.system_log_path
+            logger.set_system_log_path(Path(tmp_dir) / "system.log")
+            job_service = JobService(
+                Path(tmp_dir) / "jobs",
+                Path(tmp_dir) / "job_results",
+                fake_chatgpt_service,
+                task_logs_dir=Path(tmp_dir) / "task_logs",
+                max_workers=1,
+            )
+
+            old_support_service = support_module.api_key_service
+            old_app_service = app_module.api_key_service
+            old_config_data = dict(ai_module.config.data)
+            try:
+                support_module.api_key_service = api_key_service
+                app_module.api_key_service = api_key_service
+                ai_module.config.data.update(
+                    {
+                        "openai_compat_image_task_tracking_enabled": False,
+                        "openai_compat_image_gallery_enabled": False,
+                        "openai_compat_image_waterfall_enabled": True,
+                    }
+                )
+                client = TestClient(create_app(chatgpt_service=fake_chatgpt_service, job_service=job_service))
+
+                response = client.post(
+                    "/v1/images/generations",
+                    headers={"Authorization": f"Bearer {client_key}"},
+                    json={"model": "gpt-image-2", "prompt": "wall only", "n": 1},
+                )
+                self.assertEqual(response.status_code, 200)
+
+                jobs_response = client.get(
+                    "/api/async/jobs?type=images.generations",
+                    headers={"Authorization": f"Bearer {client_key}"},
+                )
+                self.assertEqual(jobs_response.status_code, 200)
+                self.assertEqual(jobs_response.json()["total"], 0)
+
+                gallery_response = client.get("/api/gallery", headers={"Authorization": f"Bearer {client_key}"})
+                self.assertEqual(gallery_response.status_code, 200)
+                self.assertEqual(gallery_response.json()["total"], 0)
+
+                wall_response = client.get("/api/gallery/wall", headers={"Authorization": f"Bearer {client_key}"})
+                self.assertEqual(wall_response.status_code, 200)
+                self.assertEqual(wall_response.json()["total"], 1)
+            finally:
+                ai_module.config.data = old_config_data
+                support_module.api_key_service = old_support_service
+                app_module.api_key_service = old_app_service
                 job_service.shutdown(wait=False)
                 logger.set_system_log_path(old_system_log_path)
 

@@ -30,6 +30,9 @@ const RUNTIME_SETTING_KEYS = new Set([
   "image_thumbnail_max_size",
   "image_thumbnail_quality",
   "image_wall_thumbnail_max_size",
+  "openai_compat_image_task_tracking_enabled",
+  "openai_compat_image_gallery_enabled",
+  "openai_compat_image_waterfall_enabled",
   "image_retention_days",
   "task_log_retention_days",
   "system_log_max_mb",
@@ -55,6 +58,13 @@ export function ImageRuntimeCard() {
   const setImageThumbnailMaxSize = useSettingsStore((state) => state.setImageThumbnailMaxSize);
   const setImageThumbnailQuality = useSettingsStore((state) => state.setImageThumbnailQuality);
   const setImageWallThumbnailMaxSize = useSettingsStore((state) => state.setImageWallThumbnailMaxSize);
+  const setOpenAICompatImageTaskTrackingEnabled = useSettingsStore(
+    (state) => state.setOpenAICompatImageTaskTrackingEnabled,
+  );
+  const setOpenAICompatImageGalleryEnabled = useSettingsStore((state) => state.setOpenAICompatImageGalleryEnabled);
+  const setOpenAICompatImageWaterfallEnabled = useSettingsStore(
+    (state) => state.setOpenAICompatImageWaterfallEnabled,
+  );
   const setImageRetentionDays = useSettingsStore((state) => state.setImageRetentionDays);
   const setTaskLogRetentionDays = useSettingsStore((state) => state.setTaskLogRetentionDays);
   const setSystemLogMaxMb = useSettingsStore((state) => state.setSystemLogMaxMb);
@@ -219,6 +229,51 @@ export function ImageRuntimeCard() {
               <span className="block text-sm font-medium text-stone-800">URL 模式兼容 b64_json</span>
               <span className="block text-xs leading-6 text-stone-500">
                 开启后，后台返回格式为 `url` 且客户端显式请求 `response_format=b64_json` 时，会额外带上 `b64_json` 字段。
+              </span>
+            </span>
+          </label>
+
+          <label className="flex items-start gap-3 rounded-2xl border border-stone-200 bg-stone-50 px-4 py-4">
+            <Checkbox
+              checked={Boolean(config?.openai_compat_image_task_tracking_enabled)}
+              onCheckedChange={(checked) => setOpenAICompatImageTaskTrackingEnabled(Boolean(checked))}
+              disabled={isEnvLocked("openai_compat_image_task_tracking_enabled")}
+              className="mt-0.5"
+            />
+            <span className="space-y-1">
+              <span className="block text-sm font-medium text-stone-800">兼容 API 创建任务跟踪</span>
+              <span className="block text-xs leading-6 text-stone-500">
+                `/v1/images/generations` 和 `/v1/images/edits` 请求会生成任务记录，可在任务列表中检索和查看日志。
+              </span>
+            </span>
+          </label>
+
+          <label className="flex items-start gap-3 rounded-2xl border border-stone-200 bg-stone-50 px-4 py-4">
+            <Checkbox
+              checked={Boolean(config?.openai_compat_image_gallery_enabled)}
+              onCheckedChange={(checked) => setOpenAICompatImageGalleryEnabled(Boolean(checked))}
+              disabled={isEnvLocked("openai_compat_image_gallery_enabled")}
+              className="mt-0.5"
+            />
+            <span className="space-y-1">
+              <span className="block text-sm font-medium text-stone-800">兼容 API 纳入画廊</span>
+              <span className="block text-xs leading-6 text-stone-500">
+                兼容图片接口返回成功后，结果会出现在画廊中；关闭后仅保留接口响应和可选任务记录。
+              </span>
+            </span>
+          </label>
+
+          <label className="flex items-start gap-3 rounded-2xl border border-stone-200 bg-stone-50 px-4 py-4">
+            <Checkbox
+              checked={Boolean(config?.openai_compat_image_waterfall_enabled)}
+              onCheckedChange={(checked) => setOpenAICompatImageWaterfallEnabled(Boolean(checked))}
+              disabled={isEnvLocked("openai_compat_image_waterfall_enabled")}
+              className="mt-0.5"
+            />
+            <span className="space-y-1">
+              <span className="block text-sm font-medium text-stone-800">兼容 API 纳入瀑布墙</span>
+              <span className="block text-xs leading-6 text-stone-500">
+                开启后兼容图片接口结果会进入瀑布墙；该开关可独立于画廊展示控制。
               </span>
             </span>
           </label>

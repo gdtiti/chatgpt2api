@@ -20,6 +20,9 @@ DEFAULT_IMAGE_URL_INCLUDE_B64_WHEN_REQUESTED = False
 DEFAULT_IMAGE_THUMBNAIL_MAX_SIZE = 512
 DEFAULT_IMAGE_THUMBNAIL_QUALITY = 85
 DEFAULT_IMAGE_WALL_THUMBNAIL_MAX_SIZE = 960
+DEFAULT_OPENAI_COMPAT_IMAGE_TASK_TRACKING_ENABLED = True
+DEFAULT_OPENAI_COMPAT_IMAGE_GALLERY_ENABLED = True
+DEFAULT_OPENAI_COMPAT_IMAGE_WATERFALL_ENABLED = True
 DEFAULT_IMAGE_RETENTION_DAYS = 7
 DEFAULT_TASK_LOG_RETENTION_DAYS = 7
 DEFAULT_SYSTEM_LOG_MAX_MB = 32
@@ -42,6 +45,9 @@ ENV_IMAGE_URL_TEMPLATE = "CHATGPT2API_IMAGE_URL_TEMPLATE"
 ENV_IMAGE_THUMBNAIL_MAX_SIZE = "CHATGPT2API_IMAGE_THUMBNAIL_MAX_SIZE"
 ENV_IMAGE_THUMBNAIL_QUALITY = "CHATGPT2API_IMAGE_THUMBNAIL_QUALITY"
 ENV_IMAGE_WALL_THUMBNAIL_MAX_SIZE = "CHATGPT2API_IMAGE_WALL_THUMBNAIL_MAX_SIZE"
+ENV_OPENAI_COMPAT_IMAGE_TASK_TRACKING_ENABLED = "CHATGPT2API_OPENAI_COMPAT_IMAGE_TASK_TRACKING_ENABLED"
+ENV_OPENAI_COMPAT_IMAGE_GALLERY_ENABLED = "CHATGPT2API_OPENAI_COMPAT_IMAGE_GALLERY_ENABLED"
+ENV_OPENAI_COMPAT_IMAGE_WATERFALL_ENABLED = "CHATGPT2API_OPENAI_COMPAT_IMAGE_WATERFALL_ENABLED"
 ENV_IMAGE_RETENTION_DAYS = "CHATGPT2API_IMAGE_RETENTION_DAYS"
 ENV_TASK_LOG_RETENTION_DAYS = "CHATGPT2API_TASK_LOG_RETENTION_DAYS"
 ENV_SYSTEM_LOG_MAX_MB = "CHATGPT2API_SYSTEM_LOG_MAX_MB"
@@ -65,6 +71,9 @@ ENV_OVERRIDABLE_SETTINGS = {
     "image_thumbnail_max_size": ENV_IMAGE_THUMBNAIL_MAX_SIZE,
     "image_thumbnail_quality": ENV_IMAGE_THUMBNAIL_QUALITY,
     "image_wall_thumbnail_max_size": ENV_IMAGE_WALL_THUMBNAIL_MAX_SIZE,
+    "openai_compat_image_task_tracking_enabled": ENV_OPENAI_COMPAT_IMAGE_TASK_TRACKING_ENABLED,
+    "openai_compat_image_gallery_enabled": ENV_OPENAI_COMPAT_IMAGE_GALLERY_ENABLED,
+    "openai_compat_image_waterfall_enabled": ENV_OPENAI_COMPAT_IMAGE_WATERFALL_ENABLED,
     "image_retention_days": ENV_IMAGE_RETENTION_DAYS,
     "task_log_retention_days": ENV_TASK_LOG_RETENTION_DAYS,
     "system_log_max_mb": ENV_SYSTEM_LOG_MAX_MB,
@@ -401,6 +410,33 @@ class ConfigStore:
         )
 
     @property
+    def openai_compat_image_task_tracking_enabled(self) -> bool:
+        return _resolve_bool_setting(
+            self.data,
+            "openai_compat_image_task_tracking_enabled",
+            ENV_OPENAI_COMPAT_IMAGE_TASK_TRACKING_ENABLED,
+            DEFAULT_OPENAI_COMPAT_IMAGE_TASK_TRACKING_ENABLED,
+        )
+
+    @property
+    def openai_compat_image_gallery_enabled(self) -> bool:
+        return _resolve_bool_setting(
+            self.data,
+            "openai_compat_image_gallery_enabled",
+            ENV_OPENAI_COMPAT_IMAGE_GALLERY_ENABLED,
+            DEFAULT_OPENAI_COMPAT_IMAGE_GALLERY_ENABLED,
+        )
+
+    @property
+    def openai_compat_image_waterfall_enabled(self) -> bool:
+        return _resolve_bool_setting(
+            self.data,
+            "openai_compat_image_waterfall_enabled",
+            ENV_OPENAI_COMPAT_IMAGE_WATERFALL_ENABLED,
+            DEFAULT_OPENAI_COMPAT_IMAGE_WATERFALL_ENABLED,
+        )
+
+    @property
     def image_retention_days(self) -> int:
         return _resolve_bounded_int_setting(
             self.data,
@@ -511,6 +547,9 @@ class ConfigStore:
                 "image_thumbnail_max_size": self.image_thumbnail_max_size,
                 "image_thumbnail_quality": self.image_thumbnail_quality,
                 "image_wall_thumbnail_max_size": self.image_wall_thumbnail_max_size,
+                "openai_compat_image_task_tracking_enabled": self.openai_compat_image_task_tracking_enabled,
+                "openai_compat_image_gallery_enabled": self.openai_compat_image_gallery_enabled,
+                "openai_compat_image_waterfall_enabled": self.openai_compat_image_waterfall_enabled,
                 "image_retention_days": self.image_retention_days,
                 "task_log_retention_days": self.task_log_retention_days,
                 "system_log_max_mb": self.system_log_max_mb,

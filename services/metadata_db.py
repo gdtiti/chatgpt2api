@@ -179,6 +179,7 @@ class MetadataDatabase:
                             error_message TEXT,
                             log_path TEXT,
                             result_path TEXT,
+                            task_visible INTEGER NOT NULL DEFAULT 1,
                             preview_images_json TEXT,
                             payload_json TEXT,
                             recorded_at TEXT NOT NULL
@@ -202,6 +203,8 @@ class MetadataDatabase:
                             thumbnail_relative_path TEXT,
                             wall_url TEXT,
                             wall_relative_path TEXT,
+                            gallery_visible INTEGER NOT NULL DEFAULT 1,
+                            wall_visible INTEGER NOT NULL DEFAULT 1,
                             markdown TEXT,
                             is_recommended INTEGER NOT NULL DEFAULT 0,
                             is_pinned INTEGER NOT NULL DEFAULT 0,
@@ -249,9 +252,12 @@ class MetadataDatabase:
                     self._ensure_column(connection, "gallery_images", "thumbnail_relative_path", "TEXT")
                     self._ensure_column(connection, "gallery_images", "wall_url", "TEXT")
                     self._ensure_column(connection, "gallery_images", "wall_relative_path", "TEXT")
+                    self._ensure_column(connection, "gallery_images", "gallery_visible", "INTEGER NOT NULL DEFAULT 1")
+                    self._ensure_column(connection, "gallery_images", "wall_visible", "INTEGER NOT NULL DEFAULT 1")
                     self._ensure_column(connection, "gallery_images", "is_recommended", "INTEGER NOT NULL DEFAULT 0")
                     self._ensure_column(connection, "gallery_images", "is_pinned", "INTEGER NOT NULL DEFAULT 0")
                     self._ensure_column(connection, "gallery_images", "is_blocked", "INTEGER NOT NULL DEFAULT 0")
+                    self._ensure_column(connection, "async_jobs", "task_visible", "INTEGER NOT NULL DEFAULT 1")
             finally:
                 self._initializing = previous_initializing
 
@@ -392,6 +398,9 @@ class MetadataDatabase:
             payload: dict[str, Any] | None = None,
             preview_images: list[dict[str, Any]] | None = None,
             result_path: str | None = None,
+            include_task_tracking: bool = True,
+            include_gallery: bool = True,
+            include_waterfall: bool = True,
     ) -> None:
         recorded_at = _utc_now()
         with self._lock, self._connect() as connection:
@@ -400,8 +409,8 @@ class MetadataDatabase:
                 INSERT INTO async_jobs(
                     job_id, type, status, model, created_at, updated_at, api_key_id, api_key_name,
                     prompt_preview, requested_count, size, input_image_count, result_ready, result_count,
-                    error_message, log_path, result_path, preview_images_json, payload_json, recorded_at
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    error_message, log_path, result_path, task_visible, preview_images_json, payload_json, recorded_at
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(job_id) DO UPDATE SET
                     type=excluded.type,
                     status=excluded.status,
@@ -419,6 +428,7 @@ class MetadataDatabase:
                     error_message=excluded.error_message,
                     log_path=excluded.log_path,
                     result_path=excluded.result_path,
+                    task_visible=excluded.task_visible,
                     preview_images_json=excluded.preview_images_json,
                     payload_json=excluded.payload_json,
                     recorded_at=excluded.recorded_at
@@ -441,6 +451,7 @@ class MetadataDatabase:
                     str(((public_job.get("error") or {}) if isinstance(public_job.get("error"), dict) else {}).get("message") or "") or None,
                     str(public_job.get("log_path") or "") or None,
                     str(result_path or "") or None,
+                    1 if include_task_tracking else 0,
                     json.dumps(preview_images or [], ensure_ascii=False),
                     json.dumps(payload or {}, ensure_ascii=False),
                     recorded_at,
@@ -452,6 +463,8 @@ class MetadataDatabase:
                 preview_images or [],
                 payload or {},
                 recorded_at=recorded_at,
+                include_gallery=include_gallery,
+                include_waterfall=include_waterfall,
             )
 
     def _record_gallery_images_locked(
@@ -462,6 +475,8 @@ class MetadataDatabase:
             payload: dict[str, Any],
             *,
             recorded_at: str,
+            include_gallery: bool,
+            include_waterfall: bool,
     ) -> None:
         job_id = str(public_job.get("id") or "").strip()
         if not job_id:
@@ -491,9 +506,9 @@ class MetadataDatabase:
                 INSERT INTO gallery_images(
                     job_id, image_index, image_id, type, model, prompt_preview, created_at, updated_at,
                     api_key_id, api_key_name, src, url, thumbnail_url, relative_path, thumbnail_relative_path,
-                    wall_url, wall_relative_path, markdown, is_recommended, is_pinned, is_blocked,
+                    wall_url, wall_relative_path, gallery_visible, wall_visible, markdown, is_recommended, is_pinned, is_blocked,
                     payload_json, recorded_at
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(job_id, image_index) DO UPDATE SET
                     image_id=excluded.image_id,
                     type=excluded.type,
@@ -510,6 +525,8 @@ class MetadataDatabase:
                     thumbnail_relative_path=excluded.thumbnail_relative_path,
                     wall_url=excluded.wall_url,
                     wall_relative_path=excluded.wall_relative_path,
+                    gallery_visible=excluded.gallery_visible,
+                    wall_visible=excluded.wall_visible,
                     markdown=excluded.markdown,
                     payload_json=excluded.payload_json,
                     recorded_at=excluded.recorded_at
@@ -532,6 +549,8 @@ class MetadataDatabase:
                     str(item.get("thumbnail_relative_path") or "") or None,
                     str(item.get("wall_url") or "") or None,
                     str(item.get("wall_relative_path") or "") or None,
+                    1 if include_gallery else 0,
+                    1 if include_waterfall else 0,
                     str(item.get("markdown") or "") or None,
                     int(state.get("is_recommended") or 0),
                     int(state.get("is_pinned") or 0),
@@ -560,6 +579,7 @@ class MetadataDatabase:
         direction = "ASC" if str(order or "").lower() == "asc" else "DESC"
         where: list[str] = []
         params: list[Any] = []
+        where.append("task_visible = 1")
         self._append_job_filters(
             where,
             params,
@@ -586,6 +606,18 @@ class MetadataDatabase:
     def has_async_jobs(self, *, is_admin: bool, api_key_id: str) -> bool:
         where: list[str] = []
         params: list[Any] = []
+        where.append("task_visible = 1")
+        if not is_admin:
+            where.append("api_key_id = ?")
+            params.append(api_key_id)
+        where_sql = self._where_sql(where)
+        with self._lock, self._connect() as connection:
+            row = connection.execute(f"SELECT 1 FROM async_jobs {where_sql} LIMIT 1", params).fetchone()
+        return row is not None
+
+    def has_any_async_job_records(self, *, is_admin: bool, api_key_id: str) -> bool:
+        where: list[str] = []
+        params: list[Any] = []
         if not is_admin:
             where.append("api_key_id = ?")
             params.append(api_key_id)
@@ -597,6 +629,7 @@ class MetadataDatabase:
     def summarize_async_jobs(self, *, is_admin: bool, api_key_id: str) -> dict[str, int]:
         where: list[str] = []
         params: list[Any] = []
+        where.append("task_visible = 1")
         if not is_admin:
             where.append("api_key_id = ?")
             params.append(api_key_id)
@@ -638,6 +671,7 @@ class MetadataDatabase:
         direction = "ASC" if str(order or "").lower() == "asc" else "DESC"
         where: list[str] = []
         params: list[Any] = []
+        where.append("gallery_visible = 1")
         if not is_admin:
             where.append("api_key_id = ?")
             params.append(api_key_id)
@@ -681,7 +715,7 @@ class MetadataDatabase:
                 image_rows = connection.execute(
                     f"""
                     SELECT * FROM gallery_images
-                    WHERE job_id IN ({placeholders})
+                    WHERE job_id IN ({placeholders}) AND gallery_visible = 1
                     ORDER BY job_id, image_index ASC
                     """,
                     job_ids,
@@ -742,6 +776,7 @@ class MetadataDatabase:
         offset_value = max(0, int(offset or 0))
         where: list[str] = []
         params: list[Any] = []
+        where.append("wall_visible = 1")
         if not is_admin:
             where.append("api_key_id = ?")
             params.append(api_key_id)

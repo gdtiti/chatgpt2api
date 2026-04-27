@@ -88,6 +88,9 @@ export type SettingsConfig = {
   image_thumbnail_max_size?: number | string;
   image_thumbnail_quality?: number | string;
   image_wall_thumbnail_max_size?: number | string;
+  openai_compat_image_task_tracking_enabled?: boolean;
+  openai_compat_image_gallery_enabled?: boolean;
+  openai_compat_image_waterfall_enabled?: boolean;
   image_retention_days?: number | string;
   task_log_retention_days?: number | string;
   system_log_max_mb?: number | string;

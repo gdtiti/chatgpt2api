@@ -42,6 +42,9 @@ function normalizeConfig(config: SettingsConfig): SettingsConfig {
     image_thumbnail_max_size: Number(config.image_thumbnail_max_size || 512),
     image_thumbnail_quality: Number(config.image_thumbnail_quality || 85),
     image_wall_thumbnail_max_size: Number(config.image_wall_thumbnail_max_size || 960),
+    openai_compat_image_task_tracking_enabled: config.openai_compat_image_task_tracking_enabled !== false,
+    openai_compat_image_gallery_enabled: config.openai_compat_image_gallery_enabled !== false,
+    openai_compat_image_waterfall_enabled: config.openai_compat_image_waterfall_enabled !== false,
     image_retention_days: Number(config.image_retention_days || 7),
     task_log_retention_days: Number(config.task_log_retention_days || 7),
     system_log_max_mb: Number(config.system_log_max_mb || 32),
@@ -114,6 +117,9 @@ type SettingsStore = {
   setImageThumbnailMaxSize: (value: string) => void;
   setImageThumbnailQuality: (value: string) => void;
   setImageWallThumbnailMaxSize: (value: string) => void;
+  setOpenAICompatImageTaskTrackingEnabled: (value: boolean) => void;
+  setOpenAICompatImageGalleryEnabled: (value: boolean) => void;
+  setOpenAICompatImageWaterfallEnabled: (value: boolean) => void;
   setImageRetentionDays: (value: string) => void;
   setTaskLogRetentionDays: (value: string) => void;
   setSystemLogMaxMb: (value: string) => void;
@@ -214,6 +220,9 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         image_thumbnail_max_size: Math.max(64, Math.min(2048, Number(config.image_thumbnail_max_size) || 512)),
         image_thumbnail_quality: Math.max(1, Math.min(100, Number(config.image_thumbnail_quality) || 85)),
         image_wall_thumbnail_max_size: Math.max(128, Math.min(4096, Number(config.image_wall_thumbnail_max_size) || 960)),
+        openai_compat_image_task_tracking_enabled: Boolean(config.openai_compat_image_task_tracking_enabled),
+        openai_compat_image_gallery_enabled: Boolean(config.openai_compat_image_gallery_enabled),
+        openai_compat_image_waterfall_enabled: Boolean(config.openai_compat_image_waterfall_enabled),
         image_retention_days: Math.max(0, Math.min(365, Number(config.image_retention_days) || 0)),
         task_log_retention_days: Math.max(0, Math.min(365, Number(config.task_log_retention_days) || 0)),
         system_log_max_mb: Math.max(1, Math.min(1024, Number(config.system_log_max_mb) || 1)),
@@ -451,6 +460,48 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         config: {
           ...state.config,
           image_wall_thumbnail_max_size: value,
+        },
+      };
+    });
+  },
+
+  setOpenAICompatImageTaskTrackingEnabled: (value) => {
+    set((state) => {
+      if (!state.config) {
+        return {};
+      }
+      return {
+        config: {
+          ...state.config,
+          openai_compat_image_task_tracking_enabled: value,
+        },
+      };
+    });
+  },
+
+  setOpenAICompatImageGalleryEnabled: (value) => {
+    set((state) => {
+      if (!state.config) {
+        return {};
+      }
+      return {
+        config: {
+          ...state.config,
+          openai_compat_image_gallery_enabled: value,
+        },
+      };
+    });
+  },
+
+  setOpenAICompatImageWaterfallEnabled: (value) => {
+    set((state) => {
+      if (!state.config) {
+        return {};
+      }
+      return {
+        config: {
+          ...state.config,
+          openai_compat_image_waterfall_enabled: value,
         },
       };
     });

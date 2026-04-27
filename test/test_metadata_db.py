@@ -120,6 +120,56 @@ class MetadataDatabaseTests(unittest.TestCase):
             self.assertEqual(all_total, 1)
             self.assertTrue(all_items[0]["is_blocked"])
 
+    def test_task_gallery_and_waterfall_visibility_are_independent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            database = MetadataDatabase(Path(tmp_dir) / "metadata.sqlite3")
+            public_job = {
+                "id": "job-hidden-task",
+                "type": "images.generations",
+                "status": "succeeded",
+                "model": "gpt-image-2",
+                "created_at": "2026-04-25T00:00:00Z",
+                "updated_at": "2026-04-25T00:01:00Z",
+                "api_key_id": "key-1",
+                "api_key_name": "client",
+                "prompt_preview": "隐藏任务",
+                "requested_count": 1,
+                "size": "1:1",
+                "input_image_count": 0,
+                "result_ready": True,
+                "result_count": 1,
+                "error": None,
+            }
+            preview_images = [
+                {
+                    "id": "image-1",
+                    "src": "/api/view/data/2026-04-25/job-hidden-task-1-thumb.png",
+                    "url": "/api/view/data/2026-04-25/job-hidden-task-1.png",
+                    "thumbnail_url": "/api/view/data/2026-04-25/job-hidden-task-1-thumb.png",
+                }
+            ]
+
+            database.record_async_job(
+                public_job,
+                payload={"prompt": "隐藏任务"},
+                preview_images=preview_images,
+                include_task_tracking=False,
+                include_gallery=False,
+                include_waterfall=True,
+            )
+
+            jobs, jobs_total = database.list_async_jobs(is_admin=True, api_key_id="admin")
+            self.assertEqual(jobs_total, 0)
+            self.assertEqual(jobs, [])
+
+            gallery_jobs, gallery_total = database.list_gallery_jobs(is_admin=True, api_key_id="admin")
+            self.assertEqual(gallery_total, 0)
+            self.assertEqual(gallery_jobs, [])
+
+            wall_items, wall_total = database.list_waterfall_images(is_admin=True, api_key_id="admin")
+            self.assertEqual(wall_total, 1)
+            self.assertEqual(wall_items[0]["job_id"], "job-hidden-task")
+
 
 if __name__ == "__main__":
     unittest.main()

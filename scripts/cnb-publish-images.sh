@@ -6,6 +6,8 @@ IMAGE_NAMESPACE="${IMAGE_NAMESPACE:-gdttiti}"
 IMAGE_REPOSITORY="${IMAGE_REPOSITORY:-${IMAGE_NAMESPACE}/${IMAGE_NAME}}"
 EXTERNAL_REGISTRIES="${EXTERNAL_REGISTRIES:-docker.10fu.com dockerhub.10fu.com}"
 ARCHES="${ARCHES:-amd64 arm64}"
+BUILD_CONTEXT="${BUILD_CONTEXT:-.}"
+BUILD_TARGET="${BUILD_TARGET:-app}"
 
 required_env() {
     name="$1"
@@ -26,6 +28,30 @@ docker_cmd() {
     else
         docker "$@"
     fi
+}
+
+skopeo_cmd() {
+    if [ "${CNB_DRY_RUN:-}" = "1" ]; then
+        printf 'skopeo'
+        for arg in "$@"; do
+            printf ' %s' "$arg"
+        done
+        printf '\n'
+    else
+        skopeo "$@"
+    fi
+}
+
+ensure_skopeo() {
+    if [ "${CNB_DRY_RUN:-}" = "1" ] || command -v skopeo >/dev/null 2>&1; then
+        return
+    fi
+    if command -v apk >/dev/null 2>&1; then
+        apk add --no-cache skopeo
+        return
+    fi
+    echo "skopeo is required for multi-registry copy, but no supported package manager was found" >&2
+    exit 1
 }
 
 sanitize_tag() {
@@ -51,6 +77,7 @@ is_tag_build() {
 base_tags() {
     if is_tag_build; then
         raw_tag="$(sanitize_tag "${CNB_BRANCH:-${CNB_TAG:-release}}")"
+        commit_short="$(sanitize_tag "${CNB_COMMIT_SHORT:-${CNB_COMMIT:-manual}}")"
         version="${raw_tag#v}"
         major_minor=""
         case "$version" in
@@ -61,9 +88,9 @@ base_tags() {
                 ;;
         esac
         if [ -n "$major_minor" ]; then
-            unique_words "$raw_tag" "$version" "$major_minor"
+            unique_words "$raw_tag" "$version" "$major_minor" "$commit_short"
         else
-            unique_words "$raw_tag" "$version"
+            unique_words "$raw_tag" "$version" "$commit_short"
         fi
     else
         branch="$(sanitize_tag "${CNB_BRANCH:-main}")"
@@ -112,19 +139,51 @@ registry_password_var() {
     esac
 }
 
-login_registry() {
+login_skopeo_registry() {
     registry="$1"
-    username_var="$(registry_username_var "$registry")"
-    password_var="$(registry_password_var "$registry")"
-    required_env "$username_var"
-    required_env "$password_var"
-    eval "username=\${$username_var}"
-    eval "password=\${$password_var}"
+    username="$2"
+    password="$3"
     if [ "${CNB_DRY_RUN:-}" = "1" ]; then
-        docker_cmd login "$registry" -u "$username" --password-stdin
+        skopeo_cmd login "$registry" -u "$username" --password-stdin
     else
-        printf '%s' "$password" | docker_cmd login "$registry" -u "$username" --password-stdin
+        printf '%s' "$password" | skopeo_cmd login "$registry" -u "$username" --password-stdin
     fi
+}
+
+copy_tag_to_mirrors() {
+    tag="$1"
+    source_image="$2"
+    for registry in $EXTERNAL_REGISTRIES; do
+        mirror_image="${registry}/${IMAGE_REPOSITORY}"
+        echo "Syncing ${source_image}:${tag} -> ${mirror_image}:${tag}"
+        skopeo_cmd copy --all --insecure-policy "docker://${source_image}:${tag}" "docker://${mirror_image}:${tag}"
+    done
+}
+
+print_summary_for_image() {
+    label="$1"
+    image="$2"
+    echo "[$label] $image"
+    echo "  [multi-arch]"
+    for tag in $(base_tags); do
+        echo "    - ${image}:${tag}"
+    done
+    for arch in $ARCHES; do
+        echo "  [${arch} only]"
+        for tag in $(tags_for_arch "$arch"); do
+            echo "    - ${image}:${tag}"
+        done
+    done
+}
+
+print_publish_summary() {
+    source_image="$1"
+    echo "===== CNB Image Publish Summary ====="
+    print_summary_for_image "CNB Artifact" "$source_image"
+    for registry in $EXTERNAL_REGISTRIES; do
+        print_summary_for_image "Mirror" "${registry}/${IMAGE_REPOSITORY}"
+    done
+    echo "====================================="
 }
 
 required_env CNB_DOCKER_REGISTRY
@@ -132,14 +191,25 @@ required_env CNB_REPO_SLUG_LOWERCASE
 required_env CNB_TOKEN_USER_NAME
 required_env CNB_TOKEN
 
+SOURCE_IMAGE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}"
+
 if [ "${CNB_DRY_RUN:-}" = "1" ]; then
     docker_cmd login "$CNB_DOCKER_REGISTRY" -u "$CNB_TOKEN_USER_NAME" --password-stdin
 else
     printf '%s' "$CNB_TOKEN" | docker_cmd login "$CNB_DOCKER_REGISTRY" -u "$CNB_TOKEN_USER_NAME" --password-stdin
 fi
 
+ensure_skopeo
+login_skopeo_registry "$CNB_DOCKER_REGISTRY" "$CNB_TOKEN_USER_NAME" "$CNB_TOKEN"
+
 for registry in $EXTERNAL_REGISTRIES; do
-    login_registry "$registry"
+    username_var="$(registry_username_var "$registry")"
+    password_var="$(registry_password_var "$registry")"
+    required_env "$username_var"
+    required_env "$password_var"
+    eval "username=\${$username_var}"
+    eval "password=\${$password_var}"
+    login_skopeo_registry "$registry" "$username" "$password"
 done
 
 multi_arch_platforms=""
@@ -154,10 +224,7 @@ done
 
 multi_arch_tag_args=""
 for tag in $(base_tags); do
-    multi_arch_tag_args="${multi_arch_tag_args} -t ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:${tag}"
-    for registry in $EXTERNAL_REGISTRIES; do
-        multi_arch_tag_args="${multi_arch_tag_args} -t ${registry}/${IMAGE_REPOSITORY}:${tag}"
-    done
+    multi_arch_tag_args="${multi_arch_tag_args} -t ${SOURCE_IMAGE}:${tag}"
 done
 
 echo "Building and pushing multi-arch image tags for ${multi_arch_platforms}:"
@@ -168,20 +235,21 @@ done
 # shellcheck disable=SC2086
 docker_cmd buildx build \
     --platform "$multi_arch_platforms" \
-    --target app \
+    --target "$BUILD_TARGET" \
     --push \
     $multi_arch_tag_args \
-    .
+    "$BUILD_CONTEXT"
+
+for tag in $(base_tags); do
+    copy_tag_to_mirrors "$tag" "$SOURCE_IMAGE"
+done
 
 for arch in $ARCHES; do
     platform="$(platform_for_arch "$arch")"
     tag_args=""
 
     for tag in $(tags_for_arch "$arch"); do
-        tag_args="${tag_args} -t ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:${tag}"
-        for registry in $EXTERNAL_REGISTRIES; do
-            tag_args="${tag_args} -t ${registry}/${IMAGE_REPOSITORY}:${tag}"
-        done
+        tag_args="${tag_args} -t ${SOURCE_IMAGE}:${tag}"
     done
 
     echo "Building and pushing ${platform} image tags:"
@@ -192,8 +260,14 @@ for arch in $ARCHES; do
     # shellcheck disable=SC2086
     docker_cmd buildx build \
         --platform "$platform" \
-        --target app \
+        --target "$BUILD_TARGET" \
         --push \
         $tag_args \
-        .
+        "$BUILD_CONTEXT"
+
+    for tag in $(tags_for_arch "$arch"); do
+        copy_tag_to_mirrors "$tag" "$SOURCE_IMAGE"
+    done
 done
+
+print_publish_summary "$SOURCE_IMAGE"

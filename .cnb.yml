@@ -1,6 +1,8 @@
 main:
   push:
-    - name: "push-main-job"  # Job必填name字段（字符串）
+    - name: "push-main-job"
+      runner:
+        tags: cnb:arch:amd64
       services:
         - name: "docker"
           options:
@@ -9,16 +11,16 @@ main:
       docker:
         image: "docker:27-cli"
         volumes:
-          - type: cache
-            source: "buildx_cache"
-            target: "/.cache/buildx"
+          - "/root/.cache/buildx"
       stages:
         - name: "publish architecture images"
           script: "sh scripts/cnb-publish-images.sh"
 
 $:
   tag_push:
-    - name: "tag-push-job"  # Job必填name字段（字符串）
+    - name: "tag-push-job"
+      runner:
+        tags: cnb:arch:amd64
       services:
         - name: "docker"
           options:
@@ -27,9 +29,7 @@ $:
       docker:
         image: "docker:27-cli"
         volumes:
-          - type: cache
-            source: "buildx_cache"
-            target: "/.cache/buildx"
+          - "/root/.cache/buildx"
       stages:
         - name: "publish release architecture images"
           script: "sh scripts/cnb-publish-images.sh"

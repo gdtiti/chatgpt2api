@@ -34,7 +34,7 @@ docker compose up -d
 CHATGPT2API_IMAGE=docker.10fu.com/gdttiti/chatgpt2api:latest-arm64
 ```
 
-CNB 云原生构建会在 `main` 推送和 tag 发布时先直接构建并推送多架构镜像 tag，再额外推送 `amd64` / `arm64` 单架构 tag，并同步到：
+CNB 云原生构建会在 `main` 推送和 tag 发布时先构建并推送 CNB Artifact 多架构镜像 tag，再额外推送 `amd64` / `arm64` 单架构 tag，随后用 `skopeo copy --all` 同步完整 manifest 到：
 
 ```bash
 docker.cnb.cool/gdttiti/chatgpt2api
@@ -66,6 +66,9 @@ v1.2.3-arm64
 1.2
 1.2-amd64
 1.2-arm64
+<commit>
+<commit>-amd64
+<commit>-arm64
 ```
 
 外部镜像仓库推送需要在 CNB 中配置密钥变量，示例见 `.cnb/docker-envs.example.yml`：
@@ -76,6 +79,8 @@ DOCKER_10FU_PASSWORD
 DOCKERHUB_10FU_USERNAME
 DOCKERHUB_10FU_PASSWORD
 ```
+
+构建日志末尾会输出本次发布摘要，按 CNB Artifact、`docker.10fu.com`、`dockerhub.10fu.com` 分组列出多架构 tag 和单架构 tag。
 
 支持通过环境变量覆盖 `config.json` 中的同名配置；环境变量非空时优先，未设置时回退到 `config.json`：
 

@@ -8,7 +8,9 @@ main:
       docker:
         image: docker:27-cli
         volumes:
-          - /root/.docker/buildx-cache:${CNB_WORKSPACE}/.cache/buildx
+          - type: cache
+            source: buildx_cache  # 缓存卷名称（自定义）
+            target: /.cache/buildx  # 容器内目标路径
       stages:
         - name: publish architecture images
           script: sh scripts/cnb-publish-images.sh
@@ -23,7 +25,9 @@ $:
       docker:
         image: docker:27-cli
         volumes:
-          - /root/.docker/buildx-cache:${CNB_WORKSPACE}/.cache/buildx
+          - type: cache
+            source: buildx_cache  # 缓存卷名称（自定义）
+            target: /.cache/buildx  # 容器内目标路径
       stages:
         - name: publish release architecture images
           script: sh scripts/cnb-publish-images.sh

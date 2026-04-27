@@ -8,7 +8,7 @@ main:
       docker:
         image: docker:27-cli
         volumes:
-          - /root/.docker/buildx-cache:/root/.cache/buildx
+          - ${CNB_WORKSPACE}/.docker/buildx-cache:/root/.cache/buildx
       stages:
         - name: publish architecture images
           script: sh scripts/cnb-publish-images.sh

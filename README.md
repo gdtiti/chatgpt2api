@@ -22,10 +22,53 @@
 已发布镜像支持 `linux/amd64` 与 `linux/arm64`，在 x86 服务器和 Apple Silicon / ARM Linux 设备上都会自动拉取匹配架构的版本。
 
 ```bash
-git clone git@github.com:basketikun/chatgpt2api.git
+git clone https://cnb.cool/gdttiti/chatgpt2api.git
 # 按需编辑 config.json 的密钥、`port` 和 `refresh_account_interval_minute`
 # 也可以通过环境变量覆盖同名配置项
 docker compose up -d
+```
+
+默认 `docker-compose.yml` 使用 `docker.10fu.com/gdttiti/chatgpt2api:latest-amd64`。ARM 服务器可在 `.env` 中切换镜像：
+
+```bash
+CHATGPT2API_IMAGE=docker.10fu.com/gdttiti/chatgpt2api:latest-arm64
+```
+
+CNB 云原生构建会在 `main` 推送和 tag 发布时分别构建 `amd64` 与 `arm64` 镜像，并推送到：
+
+```bash
+docker.cnb.cool/gdttiti/chatgpt2api
+docker.10fu.com/gdttiti/chatgpt2api
+dockerhub.10fu.com/gdttiti/chatgpt2api
+```
+
+分架构 tag 规则：
+
+```bash
+# main 分支
+latest-amd64
+latest-arm64
+main-amd64
+main-arm64
+<commit>-amd64
+<commit>-arm64
+
+# v1.2.3 这类发布 tag
+v1.2.3-amd64
+v1.2.3-arm64
+1.2.3-amd64
+1.2.3-arm64
+1.2-amd64
+1.2-arm64
+```
+
+外部镜像仓库推送需要在 CNB 中配置密钥变量，示例见 `.cnb/docker-envs.example.yml`：
+
+```bash
+DOCKER_10FU_USERNAME
+DOCKER_10FU_PASSWORD
+DOCKERHUB_10FU_USERNAME
+DOCKERHUB_10FU_PASSWORD
 ```
 
 支持通过环境变量覆盖 `config.json` 中的同名配置；环境变量非空时优先，未设置时回退到 `config.json`：

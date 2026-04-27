@@ -1,6 +1,6 @@
 services:
   app:
-    image: ghcr.io/basketikun/chatgpt2api:latest
+    image: ${CHATGPT2API_IMAGE:-docker.10fu.com/gdttiti/chatgpt2api:latest-amd64}
     container_name: chatgpt2api
     restart: unless-stopped
     ports:

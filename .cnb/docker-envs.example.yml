@@ -1,0 +1,6 @@
+# Copy these keys into a private CNB env/import file or configure them as
+# protected CNB repository variables. Do not commit real credentials.
+DOCKER_10FU_USERNAME: ""
+DOCKER_10FU_PASSWORD: ""
+DOCKERHUB_10FU_USERNAME: ""
+DOCKERHUB_10FU_PASSWORD: ""

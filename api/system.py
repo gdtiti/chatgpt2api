@@ -85,7 +85,7 @@ def create_router(app_version: str) -> APIRouter:
     @router.get("/api/images/{date_segment}/{file_name}")
     async def get_image(date_segment: str, file_name: str):
         path = resolve_image_path(date_segment, file_name)
-        return FileResponse(path, media_type=guess_media_type(path), filename=path.name)
+        return FileResponse(path, media_type=guess_media_type(path), filename=path.name, content_disposition_type="inline")
 
     return router
 

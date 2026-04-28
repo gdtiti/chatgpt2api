@@ -5,7 +5,7 @@ import { Github } from "lucide-react";
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 
-import webConfig from "@/constants/common-env";
+import webConfig, { withAppBasePath, withoutAppBasePath } from "@/constants/common-env";
 import { fetchAuthSession } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import {
@@ -28,6 +28,7 @@ const navItems = [
 
 export function TopNav() {
   const pathname = usePathname();
+  const appPathname = withoutAppBasePath(pathname);
   const router = useRouter();
   const [session, setSession] = useState<AuthSession | null>(null);
   const [isReady, setIsReady] = useState(false);
@@ -72,21 +73,21 @@ export function TopNav() {
   }, []);
 
   useEffect(() => {
-    if (!isReady || pathname === "/login") {
+    if (!isReady || appPathname === "/login") {
       return;
     }
-    if (session?.kind === "client" && !pathname.startsWith("/image")) {
-      router.replace("/image");
+    if (session?.kind === "client" && !appPathname.startsWith("/image")) {
+      router.replace(withAppBasePath("/image"));
     }
-  }, [isReady, pathname, router, session]);
+  }, [appPathname, isReady, router, session]);
 
   const handleLogout = async () => {
     await clearStoredAuthKey();
-    router.replace("/login");
+    router.replace(withAppBasePath("/login"));
   };
   const visibleNavItems = session?.kind === "client" ? navItems.filter((item) => item.href === "/image") : navItems;
 
-  if (pathname === "/login") {
+  if (appPathname === "/login") {
     return null;
   }
 
@@ -99,7 +100,7 @@ export function TopNav() {
       <div className="flex h-12 items-start justify-between pt-1">
         <div className="flex flex-1 items-center gap-3">
           <Link
-            href="/image"
+            href={withAppBasePath("/image")}
             className="py-2 text-[15px] font-semibold tracking-tight text-stone-950 transition hover:text-stone-700"
           >
             chatgpt2api
@@ -117,11 +118,11 @@ export function TopNav() {
         </div>
         <div className="flex justify-center gap-8">
           {visibleNavItems.map((item) => {
-            const active = pathname === item.href;
+            const active = appPathname === item.href;
             return (
               <Link
                 key={item.href}
-                href={item.href}
+                href={withAppBasePath(item.href)}
                 className={cn(
                   "relative py-2 text-[15px] font-medium transition",
                   active ? "font-semibold text-stone-950" : "text-stone-500 hover:text-stone-900",

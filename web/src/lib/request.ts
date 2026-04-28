@@ -1,6 +1,6 @@
 import axios, {AxiosError, type AxiosRequestConfig} from "axios";
 
-import webConfig from "@/constants/common-env";
+import webConfig, { withAppBasePath, withoutAppBasePath } from "@/constants/common-env";
 import {clearStoredAuthKey, getStoredAuthKey, getStoredAuthSession} from "@/store/auth";
 
 type RequestConfig = AxiosRequestConfig & {
@@ -9,7 +9,12 @@ type RequestConfig = AxiosRequestConfig & {
 
 const request = axios.create({
     baseURL: webConfig.apiUrl.replace(/\/$/, ""),
+    timeout: 30000,
 });
+
+function isApiRequestUrl(url?: string) {
+    return typeof url === "string" && (url.startsWith("/api/") || url === "/api");
+}
 
 request.interceptors.request.use(async (config) => {
     const nextConfig = {...config};
@@ -25,13 +30,19 @@ request.interceptors.request.use(async (config) => {
 });
 
 request.interceptors.response.use(
-    (response) => response,
+    (response) => {
+        const contentType = String(response.headers["content-type"] || "");
+        if (isApiRequestUrl(response.config.url) && contentType.includes("text/html")) {
+            return Promise.reject(new Error("API 请求返回了网页内容，请检查反代是否正确转发 /api 路径"));
+        }
+        return response;
+    },
     async (error: AxiosError<{ detail?: { error?: string }; error?: string; message?: string }>) => {
         const status = error.response?.status;
         const shouldRedirect = (error.config as RequestConfig | undefined)?.redirectOnUnauthorized !== false;
         if (status === 401 && shouldRedirect && typeof window !== "undefined") {
             const session = await getStoredAuthSession();
-            const pathname = window.location.pathname;
+            const pathname = withoutAppBasePath(window.location.pathname);
             const isClientConsole = session?.kind === "client";
             const adminOnlyPrefixes = ["/accounts", "/settings", "/docs"];
             const shouldFallbackToImage =
@@ -40,10 +51,10 @@ request.interceptors.response.use(
             // Avoid redirect loop — only redirect if not already on /login
             if (!window.location.pathname.startsWith("/login")) {
                 if (shouldFallbackToImage) {
-                    window.location.replace("/image");
+                    window.location.replace(withAppBasePath("/image"));
                 } else {
                     await clearStoredAuthKey();
-                    window.location.replace("/login");
+                    window.location.replace(withAppBasePath("/login"));
                 }
                 // Return a never-resolving promise to prevent further error handling
                 // while the browser navigates away
@@ -56,6 +67,7 @@ request.interceptors.response.use(
             payload?.detail?.error ||
             payload?.error ||
             payload?.message ||
+            (error.code === "ECONNABORTED" ? "请求超时，请检查反代到后端 API 的连接" : "") ||
             error.message ||
             `请求失败 (${status || 500})`;
         return Promise.reject(new Error(message));

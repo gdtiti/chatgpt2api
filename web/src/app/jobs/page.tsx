@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
 import {
   CheckCircle2,
   ChevronLeft,
@@ -53,6 +53,15 @@ const typeOptions = [
   { value: "images.edits", label: "图生图" },
 ] as const;
 
+const JOBS_AUTO_REFRESH_STORAGE_KEY = "chatgpt2api_jobs_auto_refresh_interval_ms";
+
+const autoRefreshOptions = [
+  { value: "0", label: "不自动刷新" },
+  { value: "15000", label: "15 秒" },
+  { value: "30000", label: "30 秒" },
+  { value: "60000", label: "60 秒" },
+] as const;
+
 const statusMeta: Record<
   AsyncJobStatus,
   {
@@ -97,6 +106,11 @@ function formatError(job: AsyncJobItem) {
 
 function formatPrompt(job: AsyncJobItem) {
   return String(job.prompt_preview || "").trim() || "—";
+}
+
+function formatAutoRefreshBadge(intervalMs: number) {
+  const matched = autoRefreshOptions.find((item) => item.value === String(intervalMs));
+  return matched?.label || `${Math.round(intervalMs / 1000)} 秒`;
 }
 
 function formatJson(value: unknown) {
@@ -192,7 +206,9 @@ function extractImageSources(result: unknown, job?: AsyncJobItem | null) {
 }
 
 export default function JobsPage() {
-  const didLoadRef = useRef(false);
+  const didLoadAutoRefreshPreferenceRef = useRef(false);
+  const isMountedRef = useRef(true);
+  const jobsRequestSeqRef = useRef(0);
   const silentLoadInFlightRef = useRef(false);
   const [jobs, setJobs] = useState<AsyncJobItem[]>([]);
   const [summary, setSummary] = useState<AsyncJobSummary>({
@@ -210,6 +226,7 @@ export default function JobsPage() {
   const [queryInput, setQueryInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [sortOption, setSortOption] = useState("updated_at:desc");
+  const [autoRefreshInterval, setAutoRefreshInterval] = useState(String(JOBS_ACTIVE_POLL_INTERVAL_MS));
   const [isLoading, setIsLoading] = useState(true);
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailJob, setDetailJob] = useState<AsyncJobItem | null>(null);
@@ -229,9 +246,12 @@ export default function JobsPage() {
   const detailImages = useMemo(() => extractImageSources(detailResult, detailJob), [detailJob, detailResult]);
   const pageSize = Math.max(1, Number(limit) || 50);
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const autoRefreshIntervalMs = Math.max(0, Number(autoRefreshInterval) || 0);
+  const autoRefreshEnabled = hasActiveJobs && autoRefreshIntervalMs > 0;
   const [sort, order] = sortOption.split(":");
 
-  const loadJobs = async (silent = false) => {
+  const loadJobs = useCallback(async (silent = false) => {
+    const requestSeq = ++jobsRequestSeqRef.current;
     if (!silent) {
       setIsLoading(true);
     }
@@ -245,38 +265,56 @@ export default function JobsPage() {
         sort,
         order,
       });
+      if (!isMountedRef.current || requestSeq !== jobsRequestSeqRef.current) {
+        return;
+      }
       setJobs(data.items);
       setTotal(data.total);
       setSummary(data.summary);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "加载任务列表失败");
+      if (isMountedRef.current && !silent) {
+        toast.error(error instanceof Error ? error.message : "加载任务列表失败");
+      }
     } finally {
-      if (!silent) {
+      if (isMountedRef.current && !silent) {
         setIsLoading(false);
       }
     }
-  };
+  }, [limit, order, page, pageSize, searchQuery, sort, statusFilter, typeFilter]);
 
   useEffect(() => {
-    if (didLoadRef.current) {
-      return;
-    }
-    didLoadRef.current = true;
-    void loadJobs();
+    return () => {
+      isMountedRef.current = false;
+    };
   }, []);
 
   useEffect(() => {
-    if (!didLoadRef.current) {
+    if (!didLoadAutoRefreshPreferenceRef.current) {
       return;
     }
-    void loadJobs();
-  }, [limit, page, statusFilter, typeFilter, searchQuery, sortOption]);
+    window.localStorage.setItem(JOBS_AUTO_REFRESH_STORAGE_KEY, autoRefreshInterval);
+  }, [autoRefreshInterval]);
 
   useEffect(() => {
-    if (!hasActiveJobs) {
+    const storedValue = window.localStorage.getItem(JOBS_AUTO_REFRESH_STORAGE_KEY);
+    if (typeof storedValue === "string" && autoRefreshOptions.some((item) => item.value === storedValue)) {
+      setAutoRefreshInterval(storedValue);
+    }
+    didLoadAutoRefreshPreferenceRef.current = true;
+  }, []);
+
+  useEffect(() => {
+    void loadJobs();
+  }, [loadJobs]);
+
+  useEffect(() => {
+    if (!autoRefreshEnabled) {
       return;
     }
-    const timer = window.setInterval(() => {
+    const runSilentLoad = () => {
+      if (document.hidden) {
+        return;
+      }
       if (silentLoadInFlightRef.current) {
         return;
       }
@@ -284,9 +322,19 @@ export default function JobsPage() {
       void loadJobs(true).finally(() => {
         silentLoadInFlightRef.current = false;
       });
-    }, JOBS_ACTIVE_POLL_INTERVAL_MS);
-    return () => window.clearInterval(timer);
-  }, [hasActiveJobs, limit, page, statusFilter, typeFilter, searchQuery, sortOption]);
+    };
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        runSilentLoad();
+      }
+    };
+    const timer = window.setInterval(runSilentLoad, autoRefreshIntervalMs);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [autoRefreshEnabled, autoRefreshIntervalMs, loadJobs]);
 
   useEffect(() => {
     setPage(1);
@@ -342,9 +390,13 @@ export default function JobsPage() {
           <div className="text-xs font-semibold tracking-[0.18em] text-stone-500 uppercase">Jobs</div>
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-2xl font-semibold tracking-tight">任务列表</h1>
-            {hasActiveJobs ? (
+            {autoRefreshEnabled ? (
               <Badge variant="info" className="rounded-full px-3 py-1">
-                自动刷新中
+                自动刷新 {formatAutoRefreshBadge(autoRefreshIntervalMs)}
+              </Badge>
+            ) : hasActiveJobs ? (
+              <Badge variant="warning" className="rounded-full px-3 py-1">
+                有运行任务
               </Badge>
             ) : null}
           </div>
@@ -446,6 +498,19 @@ export default function JobsPage() {
                     {["20", "50", "100", "200"].map((item) => (
                       <SelectItem key={item} value={item}>
                         {item} 条
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <Select value={autoRefreshInterval} onValueChange={setAutoRefreshInterval}>
+                  <SelectTrigger className="h-10 w-[150px] rounded-xl border-stone-200 bg-white">
+                    <SelectValue placeholder="自动刷新" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {autoRefreshOptions.map((item) => (
+                      <SelectItem key={item.value} value={item.value}>
+                        {item.label}
                       </SelectItem>
                     ))}
                   </SelectContent>

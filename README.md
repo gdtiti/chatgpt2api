@@ -23,7 +23,7 @@
 
 ```bash
 git clone https://cnb.cool/gdttiti/chatgpt2api.git
-# 按需编辑 config.json 的密钥、`port` 和 `refresh_account_interval_minute`
+# 按需编辑 data/config.json 的密钥、`port` 和 `refresh_account_interval_minute`
 # 也可以通过环境变量覆盖同名配置项
 docker compose up -d
 ```
@@ -82,10 +82,12 @@ DOCKERHUB_10FU_PASSWORD
 
 如果外部镜像站密钥未配置，流水线会直接尝试匿名 `skopeo copy --all`；如需把未识别的外部镜像站配置视为错误，可设置 `EXTERNAL_REGISTRIES_REQUIRED=1`。构建日志末尾会输出本次发布摘要，按 CNB Artifact 和已同步镜像站分组列出多架构 tag 和单架构 tag。
 
-支持通过环境变量覆盖 `config.json` 中的同名配置；环境变量非空时优先，未设置时回退到 `config.json`：
+支持通过环境变量调整数据路径，或覆盖 `config.json` 中的同名配置；环境变量非空时优先，未设置时回退到 `config.json`：
 
 ```bash
 CHATGPT2API_AUTH_KEY
+CHATGPT2API_DATA_DIR
+CHATGPT2API_CONFIG_FILE
 CHATGPT2API_PORT
 CHATGPT2API_REFRESH_ACCOUNT_INTERVAL_MINUTE
 CHATGPT2API_PROXY
@@ -108,9 +110,11 @@ CHATGPT2API_DATA_CLEANUP_ENABLED
 CHATGPT2API_DATA_CLEANUP_INTERVAL_MINUTES
 ```
 
+默认持久化数据目录是 `/app/data`，默认配置文件是 `/app/data/config.json`。可用 `CHATGPT2API_DATA_DIR` 覆盖数据目录，用 `CHATGPT2API_CONFIG_FILE` 覆盖配置文件；相对路径会按应用根目录解析。首次启动时，如果新配置文件不存在且旧路径 `/app/config.json` 存在，会自动读取旧配置并写入新路径，旧文件不会被删除。
+
 启动端口额外支持通用环境变量 `PORT`。优先级是：`CHATGPT2API_PORT` > `PORT` > `config.json` 中的 `port` > 默认 `80`。
 
-使用 `docker compose` 时，可直接在当前 shell 导出这些变量，或写入同目录 `.env` 文件，`docker-compose.yml` 已将它们透传到容器内。`config.json` 会以可写方式挂载到容器内，设置页保存的系统配置会写回该文件；如果某项环境变量为非空值，该项仍会优先覆盖 `config.json`。若同时调整容器监听端口，可再设置 `CHATGPT2API_HOST_PORT` 修改宿主机映射端口。
+使用 `docker compose` 时，可直接在当前 shell 导出这些变量，或写入同目录 `.env` 文件，`docker-compose.yml` 已将它们透传到容器内。默认只挂载 `./data:/app/data`，设置页保存的系统配置会写回 `./data/config.json`，图片、画廊、瀑布墙、任务列表和任务日志也会保存在同一持久化目录；如果某项环境变量为非空值，该项仍会优先覆盖 `config.json`。若同时调整容器监听端口，可再设置 `CHATGPT2API_HOST_PORT` 修改宿主机映射端口。
 
 ## 功能
 
@@ -184,7 +188,7 @@ New Api 接入：
 
 ## API
 
-管理接口继续使用 `config.json` 或 `CHATGPT2API_AUTH_KEY` 中的 `auth-key`：
+管理接口继续使用 `/app/data/config.json` 或 `CHATGPT2API_AUTH_KEY` 中的 `auth-key`：
 
 ```http
 Authorization: Bearer <auth-key>

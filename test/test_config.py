@@ -59,6 +59,79 @@ class ConfigLoadingTests(unittest.TestCase):
                 else:
                     module.os.environ["CHATGPT2API_AUTH_KEY"] = old_env_auth_key
 
+    def test_default_config_file_is_under_data_dir(self) -> None:
+        module = self.config_module
+
+        self.assertEqual(module.CONFIG_FILE, module.DATA_DIR / "config.json")
+
+    def test_startup_paths_support_environment_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base_dir = Path(tmp_dir)
+            data_dir = base_dir / "runtime-data"
+            config_file = base_dir / "custom-config.json"
+
+            module = self.config_module
+            old_base_dir = module.BASE_DIR
+            old_data_dir_env = module.os.environ.get("CHATGPT2API_DATA_DIR")
+            old_config_file_env = module.os.environ.get("CHATGPT2API_CONFIG_FILE")
+            try:
+                module.BASE_DIR = base_dir
+                module.os.environ["CHATGPT2API_DATA_DIR"] = str(data_dir)
+                module.os.environ["CHATGPT2API_CONFIG_FILE"] = str(config_file)
+
+                self.assertEqual(module._resolve_startup_path("CHATGPT2API_DATA_DIR", base_dir / "data"), data_dir)
+                self.assertEqual(
+                    module._resolve_startup_path("CHATGPT2API_CONFIG_FILE", data_dir / "config.json"),
+                    config_file,
+                )
+
+                module.os.environ["CHATGPT2API_CONFIG_FILE"] = "relative-config.json"
+                self.assertEqual(
+                    module._resolve_startup_path("CHATGPT2API_CONFIG_FILE", data_dir / "config.json"),
+                    base_dir / "relative-config.json",
+                )
+            finally:
+                module.BASE_DIR = old_base_dir
+                if old_data_dir_env is None:
+                    module.os.environ.pop("CHATGPT2API_DATA_DIR", None)
+                else:
+                    module.os.environ["CHATGPT2API_DATA_DIR"] = old_data_dir_env
+                if old_config_file_env is None:
+                    module.os.environ.pop("CHATGPT2API_CONFIG_FILE", None)
+                else:
+                    module.os.environ["CHATGPT2API_CONFIG_FILE"] = old_config_file_env
+
+    def test_config_store_migrates_legacy_config_to_data_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base_dir = Path(tmp_dir)
+            data_dir = base_dir / "data"
+            new_config_file = data_dir / "config.json"
+            legacy_config_file = base_dir / "config.json"
+            legacy_config_file.write_text(
+                json.dumps({"auth-key": "legacy-auth", "refresh_account_interval_minute": 12}),
+                encoding="utf-8",
+            )
+
+            module = self.config_module
+            old_data_dir = module.DATA_DIR
+            old_config_file = module.CONFIG_FILE
+            old_legacy_config_file = module.LEGACY_CONFIG_FILE
+            try:
+                module.DATA_DIR = data_dir
+                module.CONFIG_FILE = new_config_file
+                module.LEGACY_CONFIG_FILE = legacy_config_file
+
+                store = module.ConfigStore(new_config_file)
+
+                self.assertEqual(store.auth_key, "legacy-auth")
+                self.assertTrue(new_config_file.exists())
+                self.assertTrue(legacy_config_file.exists())
+                self.assertEqual(json.loads(new_config_file.read_text(encoding="utf-8"))["auth-key"], "legacy-auth")
+            finally:
+                module.DATA_DIR = old_data_dir
+                module.CONFIG_FILE = old_config_file
+                module.LEGACY_CONFIG_FILE = old_legacy_config_file
+
     def test_config_store_prefers_non_empty_env_values(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             config_file = Path(tmp_dir) / "config.json"

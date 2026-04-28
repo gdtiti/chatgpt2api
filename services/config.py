@@ -7,8 +7,23 @@ import sys
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parents[1]
-DATA_DIR = BASE_DIR / "data"
-CONFIG_FILE = BASE_DIR / "config.json"
+ENV_DATA_DIR = "CHATGPT2API_DATA_DIR"
+ENV_CONFIG_FILE = "CHATGPT2API_CONFIG_FILE"
+
+
+def _resolve_startup_path(env_name: str, default: Path) -> Path:
+    raw_value = str(os.getenv(env_name) or "").strip()
+    if not raw_value:
+        return default
+    candidate = Path(raw_value)
+    if not candidate.is_absolute():
+        candidate = BASE_DIR / candidate
+    return candidate
+
+
+DATA_DIR = _resolve_startup_path(ENV_DATA_DIR, BASE_DIR / "data")
+CONFIG_FILE = _resolve_startup_path(ENV_CONFIG_FILE, DATA_DIR / "config.json")
+LEGACY_CONFIG_FILE = BASE_DIR / "config.json"
 VERSION_FILE = BASE_DIR / "VERSION"
 DEFAULT_REFRESH_ACCOUNT_INTERVAL_MINUTE = 5
 DEFAULT_LISTEN_PORT = 80
@@ -225,9 +240,23 @@ def _read_json_object(path: Path, *, name: str) -> dict[str, object]:
     return data if isinstance(data, dict) else {}
 
 
+def _same_path(left: Path, right: Path) -> bool:
+    try:
+        return left.resolve(strict=False) == right.resolve(strict=False)
+    except OSError:
+        return left.absolute() == right.absolute()
+
+
+def _load_config_data(path: Path) -> dict[str, object]:
+    data = _read_json_object(path, name="config.json")
+    if data or path.exists() or _same_path(path, LEGACY_CONFIG_FILE):
+        return data
+    return _read_json_object(LEGACY_CONFIG_FILE, name="legacy config.json")
+
+
 def _load_settings() -> LoadedSettings:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    raw_config = _read_json_object(CONFIG_FILE, name="config.json")
+    raw_config = _load_config_data(CONFIG_FILE)
     auth_key = _resolve_text_setting(raw_config, "auth-key", ENV_AUTH_KEY)
     if _is_invalid_auth_key(auth_key):
         raise ValueError(
@@ -265,10 +294,17 @@ class ConfigStore:
             )
 
     def _load(self) -> dict[str, object]:
-        return _read_json_object(self.path, name="config.json")
+        data = _load_config_data(self.path)
+        if data and not self.path.exists() and not _same_path(self.path, LEGACY_CONFIG_FILE):
+            self.data = data
+            self._save(record_metadata=False)
+        return data
 
-    def _save(self) -> None:
+    def _save(self, *, record_metadata: bool = True) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps(self.data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        if not record_metadata:
+            return
         try:
             from services.metadata_db import metadata_db
 

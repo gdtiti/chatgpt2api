@@ -28,26 +28,12 @@ class MetadataDatabase:
 
     @contextmanager
     def _connect(self):
-        connection = self._open_connection()
-        connection.row_factory = sqlite3.Row
+        connection = self._open_verified_connection()
         try:
-            try:
-                self._verify_connection(connection)
-            except sqlite3.DatabaseError as exc:
-                connection.close()
-                if not self._is_corruption_error(exc):
-                    raise
-                self._quarantine_corrupt_database(exc)
-                self._initialize()
-                connection = self._open_connection()
-                connection.row_factory = sqlite3.Row
-                self._verify_connection(connection)
             if not self._initializing and not self._schema_ready(connection):
                 connection.close()
                 self._initialize()
-                connection = self._open_connection()
-                connection.row_factory = sqlite3.Row
-                self._verify_connection(connection)
+                connection = self._open_verified_connection()
             yield connection
             connection.commit()
         except Exception:
@@ -62,13 +48,35 @@ class MetadataDatabase:
     def _open_connection(self) -> sqlite3.Connection:
         return sqlite3.connect(self.path)
 
+    def _open_verified_connection(self) -> sqlite3.Connection:
+        connection = self._open_connection()
+        connection.row_factory = sqlite3.Row
+        try:
+            self._verify_connection(connection)
+            return connection
+        except sqlite3.DatabaseError as exc:
+            connection.close()
+            if not self._is_corruption_error(exc):
+                raise
+            self._quarantine_corrupt_database(exc)
+            if not self._initializing:
+                self._initialize()
+            connection = self._open_connection()
+            connection.row_factory = sqlite3.Row
+            self._verify_connection(connection)
+            return connection
+
     @staticmethod
     def _is_corruption_error(exc: sqlite3.DatabaseError) -> bool:
         message = str(exc).lower()
         return (
             "database disk image is malformed" in message
+            or "file is encrypted or is not a database" in message
             or "file is not a database" in message
+            or "malformed database schema" in message
+            or "not a database" in message
             or "sqlite integrity check failed" in message
+            or "unsupported file format" in message
         )
 
     @staticmethod

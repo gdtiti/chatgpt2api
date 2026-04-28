@@ -9,6 +9,36 @@ from services.metadata_db import MetadataDatabase
 
 
 class MetadataDatabaseTests(unittest.TestCase):
+    def test_quick_check_failure_during_initialize_is_quarantined_without_recursion(self) -> None:
+        class QuickCheckFailOnceDatabase(MetadataDatabase):
+            def __init__(self, path: Path) -> None:
+                self.initialize_calls = 0
+                self.verify_calls = 0
+                super().__init__(path)
+
+            def _initialize(self) -> None:
+                self.initialize_calls += 1
+                super()._initialize()
+
+            def _verify_connection(self, connection: sqlite3.Connection) -> None:
+                self.verify_calls += 1
+                if self.verify_calls == 1:
+                    raise sqlite3.DatabaseError("sqlite integrity check failed: forced")
+                super()._verify_connection(connection)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "metadata.sqlite3"
+            db_path.write_bytes(b"placeholder")
+
+            database = QuickCheckFailOnceDatabase(db_path)
+
+            self.assertEqual(database.initialize_calls, 1)
+            quarantined = list(Path(tmp_dir).glob("metadata.sqlite3.corrupt-*"))
+            self.assertEqual(len(quarantined), 1)
+            jobs, total = database.list_async_jobs(is_admin=True, api_key_id="admin")
+            self.assertEqual(total, 0)
+            self.assertEqual(jobs, [])
+
     def test_missing_core_tables_are_recreated_on_next_use(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             db_path = Path(tmp_dir) / "metadata.sqlite3"

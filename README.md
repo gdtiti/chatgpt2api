@@ -71,7 +71,7 @@ v1.2.3-arm64
 <commit>-arm64
 ```
 
-外部镜像仓库同步需要在 CNB 中配置密钥变量，示例见 `.cnb/docker-envs.example.yml`：
+外部镜像仓库默认使用匿名同步；如果 registry 后续改为需要登录，可在 CNB 中配置密钥变量，示例见 `.cnb/docker-envs.example.yml`：
 
 ```bash
 DOCKER_10FU_USERNAME
@@ -80,7 +80,7 @@ DOCKERHUB_10FU_USERNAME
 DOCKERHUB_10FU_PASSWORD
 ```
 
-如果外部镜像站密钥未配置，流水线会继续发布 CNB Artifact，并在日志中明确跳过对应镜像站；如需把外部镜像站同步设为强制要求，可设置 `EXTERNAL_REGISTRIES_REQUIRED=1`。构建日志末尾会输出本次发布摘要，按 CNB Artifact、已同步镜像站和跳过的镜像站分组列出多架构 tag 和单架构 tag。
+如果外部镜像站密钥未配置，流水线会直接尝试匿名 `skopeo copy --all`；如需把未识别的外部镜像站配置视为错误，可设置 `EXTERNAL_REGISTRIES_REQUIRED=1`。构建日志末尾会输出本次发布摘要，按 CNB Artifact 和已同步镜像站分组列出多架构 tag 和单架构 tag。
 
 支持通过环境变量覆盖 `config.json` 中的同名配置；环境变量非空时优先，未设置时回退到 `config.json`：
 

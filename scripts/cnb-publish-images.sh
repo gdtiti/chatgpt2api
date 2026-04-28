@@ -10,7 +10,6 @@ ARCHES="${ARCHES:-amd64 arm64}"
 BUILD_CONTEXT="${BUILD_CONTEXT:-.}"
 BUILD_TARGET="${BUILD_TARGET:-app}"
 ACTIVE_EXTERNAL_REGISTRIES=""
-SKIPPED_EXTERNAL_REGISTRIES=""
 
 required_env() {
     name="$1"
@@ -173,7 +172,6 @@ mark_skipped_registry() {
         exit 1
     fi
     echo "$message"
-    SKIPPED_EXTERNAL_REGISTRIES="$(append_word "$SKIPPED_EXTERNAL_REGISTRIES" "$registry")"
 }
 
 prepare_external_registries() {
@@ -185,8 +183,9 @@ prepare_external_registries() {
         eval "username=\${$username_var:-}"
         eval "password=\${$password_var:-}"
         if [ -z "$username" ] || [ -z "$password" ]; then
-            mark_skipped_registry "$registry" "missing ${username_var} or ${password_var}"
-            continue
+            echo "Using anonymous mirror access for ${registry}; set ${username_var} and ${password_var} to enable login."
+        else
+            login_skopeo_registry "$registry" "$username" "$password"
         fi
         ACTIVE_EXTERNAL_REGISTRIES="$(append_word "$ACTIVE_EXTERNAL_REGISTRIES" "$registry")"
     done
@@ -225,10 +224,6 @@ print_publish_summary() {
     for registry in $ACTIVE_EXTERNAL_REGISTRIES; do
         print_summary_for_image "Mirror" "${registry}/${IMAGE_REPOSITORY}"
     done
-    for registry in $SKIPPED_EXTERNAL_REGISTRIES; do
-        echo "[Mirror skipped] ${registry}/${IMAGE_REPOSITORY}"
-        echo "  reason: missing credentials or unsupported registry mapping"
-    done
     echo "====================================="
 }
 
@@ -253,14 +248,6 @@ if [ -n "$ACTIVE_EXTERNAL_REGISTRIES" ]; then
 else
     echo "No external mirror registries are active; only CNB Artifact will be published."
 fi
-
-for registry in $ACTIVE_EXTERNAL_REGISTRIES; do
-    username_var="$(registry_username_var "$registry")"
-    password_var="$(registry_password_var "$registry")"
-    eval "username=\${$username_var:-}"
-    eval "password=\${$password_var:-}"
-    login_skopeo_registry "$registry" "$username" "$password"
-done
 
 multi_arch_platforms=""
 for arch in $ARCHES; do

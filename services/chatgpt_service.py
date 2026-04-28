@@ -28,8 +28,24 @@ from utils.helper import is_image_chat_request
 from utils.log import logger
 
 
+NO_DOWNLOADABLE_IMAGE_RESULT = "no downloadable image result found"
+
+
+def image_error_code(message: object) -> str:
+    text = str(message or "").lower()
+    if NO_DOWNLOADABLE_IMAGE_RESULT in text:
+        return "image_result_not_found"
+    if "no available image quota" in text:
+        return "image_quota_unavailable"
+    return "image_generation_failed"
+
+
 class ImageGenerationError(Exception):
-    pass
+    def __init__(self, message: object, *, status_code: int = 502, code: str | None = None):
+        text = str(message or "image generation failed")
+        super().__init__(text)
+        self.status_code = status_code
+        self.code = code or image_error_code(text)
 
 
 def is_token_invalid_error(message: str) -> bool:
@@ -43,7 +59,7 @@ def is_token_invalid_error(message: str) -> bool:
 
 
 def is_retryable_image_error(message: str) -> bool:
-    return "no downloadable image result found" in str(message or "").lower()
+    return NO_DOWNLOADABLE_IMAGE_RESULT in str(message or "").lower()
 
 
 def _resolve_image_response_format(response_format: str | None) -> str:
@@ -824,6 +840,7 @@ class ChatGPTService:
             base_url: str | None = None,
             images: list[str] | None = None,
             quality: str | None = None,
+            request_id: str | None = None,
     ) -> Iterator[dict[str, object]]:
         stream = self._new_backend(request_token).stream_image_chat_completions(
             prompt=prompt,
@@ -854,7 +871,7 @@ class ChatGPTService:
                 response_format,
                 base_url,
                 created,
-                request_token,
+                request_id or request_token,
                 index,
             )
             if formatted_result:
@@ -1057,9 +1074,11 @@ class ChatGPTService:
             response_format: str | None = None,
             base_url: str | None = None,
             quality: str | None = None,
+            request_id: str | None = None,
     ) -> Iterator[dict[str, object]]:
         last_error = ""
         emitted = False
+        emitted_result = False
         for index in range(1, n + 1):
             while True:
                 try:
@@ -1072,7 +1091,7 @@ class ChatGPTService:
                         "total": n,
                         "error": last_error,
                     })
-                    if emitted:
+                    if emitted_result:
                         return
                     raise ImageGenerationError(last_error or "image generation failed") from exc
 
@@ -1096,12 +1115,14 @@ class ChatGPTService:
                             response_format,
                             base_url,
                             quality=quality,
+                            request_id=request_id,
                     ):
                         emitted = True
                         emitted_for_request = True
                         data = chunk.get("data")
                         if isinstance(data, list) and data:
                             has_result = True
+                            emitted_result = True
                         yield chunk
                     if not has_result:
                         last_error = "image generation failed"
@@ -1133,6 +1154,15 @@ class ChatGPTService:
                             "request_token": request_token,
                         })
                         continue
+                    if emitted_result:
+                        logger.warning({
+                            "event": "image_generate_stream_partial_success",
+                            "request_token": request_token,
+                            "index": index,
+                            "total": n,
+                            "error": last_error,
+                        })
+                        return
                     raise ImageGenerationError(last_error or "image generation failed") from exc
 
     def edit_with_pool(
@@ -1186,9 +1216,11 @@ class ChatGPTService:
             size: str | None = None,
             response_format: str | None = None,
             base_url: str | None = None,
+            request_id: str | None = None,
     ) -> Iterator[dict[str, object]]:
         last_error = ""
         emitted = False
+        emitted_result = False
         normalized_images = list(images)
         if not normalized_images:
             raise ImageGenerationError("image is required")
@@ -1206,7 +1238,7 @@ class ChatGPTService:
                         "total": n,
                         "error": last_error,
                     })
-                    if emitted:
+                    if emitted_result:
                         return
                     raise ImageGenerationError(last_error or "image edit failed") from exc
 
@@ -1231,12 +1263,14 @@ class ChatGPTService:
                             response_format=response_format,
                             base_url=base_url,
                             images=encoded_images,
+                            request_id=request_id,
                     ):
                         emitted = True
                         emitted_for_request = True
                         data = chunk.get("data")
                         if isinstance(data, list) and data:
                             has_result = True
+                            emitted_result = True
                         yield chunk
                     if not has_result:
                         last_error = "image edit failed"
@@ -1268,6 +1302,15 @@ class ChatGPTService:
                             "request_token": request_token,
                         })
                         continue
+                    if emitted_result:
+                        logger.warning({
+                            "event": "image_edit_stream_partial_success",
+                            "request_token": request_token,
+                            "index": index,
+                            "total": n,
+                            "error": last_error,
+                        })
+                        return
                     raise ImageGenerationError(last_error or "image edit failed") from exc
 
     @staticmethod

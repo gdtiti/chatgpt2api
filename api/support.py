@@ -7,6 +7,7 @@ from fastapi import HTTPException, Request
 
 from services.account_service import account_service
 from services.api_key_service import APIKeyAuthError, AuthPrincipal, api_key_service
+from services.chatgpt_service import image_error_code
 from services.config import config
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -71,8 +72,25 @@ def resolve_image_base_url(request: Request) -> str:
 def raise_image_quota_error(exc: Exception) -> None:
     message = str(exc)
     if "no available image quota" in message.lower():
-        raise HTTPException(status_code=429, detail={"error": "no available image quota"}) from exc
-    raise HTTPException(status_code=502, detail={"error": message}) from exc
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "no available image quota",
+                "message": "no available image quota",
+                "code": "image_quota_unavailable",
+                "status_code": 429,
+            },
+        ) from exc
+    status_code = int(getattr(exc, "status_code", 502) or 502)
+    raise HTTPException(
+        status_code=status_code,
+        detail={
+            "error": message,
+            "message": message,
+            "code": str(getattr(exc, "code", "") or image_error_code(message)),
+            "status_code": status_code,
+        },
+    ) from exc
 
 
 def sanitize_cpa_pool(pool: dict | None) -> dict | None:

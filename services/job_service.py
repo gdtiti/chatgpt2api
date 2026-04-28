@@ -10,7 +10,7 @@ from typing import Any
 from uuid import uuid4
 
 from services.api_key_service import AuthPrincipal
-from services.chatgpt_service import ChatGPTService
+from services.chatgpt_service import ChatGPTService, image_error_code
 from services.config import config
 from services.image_options import normalize_image_quality, normalize_image_size
 from services.data_service import ensure_preview_image_metadata
@@ -106,6 +106,17 @@ def _count_result_items(result: dict[str, object] | None) -> int:
     if value is None:
         return 0
     return 1
+
+
+def _error_payload(error: object, *, default_status_code: int = 500) -> dict[str, object]:
+    message = str(error or "job failed")
+    status_code = int(getattr(error, "status_code", default_status_code) or default_status_code)
+    code = str(getattr(error, "code", "") or image_error_code(message))
+    return {
+        "message": message,
+        "code": code,
+        "status_code": status_code,
+    }
 
 
 def _is_probable_image_url(value: str) -> bool:
@@ -329,6 +340,34 @@ class JobService:
     def _load_result(self, job_id: str) -> dict[str, object] | None:
         return self._read_json(self._result_file(job_id))
 
+    def _store_partial_image_result(self, job: dict[str, object], chunk: dict[str, object]) -> None:
+        job_id = str(job.get("id") or "")
+        if not job_id:
+            return
+        data = chunk.get("data")
+        if not isinstance(data, list):
+            return
+        image_items = [item for item in data if isinstance(item, dict)]
+        if not image_items:
+            return
+        result_file = self._result_file(job_id)
+        current_payload = self._load_result(job_id) or {}
+        current_result = current_payload.get("result") if isinstance(current_payload, dict) else None
+        current_result = current_result if isinstance(current_result, dict) else {}
+        current_data = current_result.get("data") if isinstance(current_result.get("data"), list) else []
+        next_result = dict(current_result)
+        next_result["created"] = next_result.get("created") or chunk.get("created")
+        next_result["data"] = [item for item in current_data if isinstance(item, dict)] + image_items
+        result_payload = {"result": next_result}
+        self._write_json(result_file, result_payload)
+        current_job = self._load_job(job_id) or job
+        self.metadata_db.record_async_job(
+            self._public_job(current_job, result_payload),
+            payload=dict(current_job.get("payload") or job.get("payload") or {}),
+            preview_images=_extract_preview_images(result_payload),
+            result_path=str(result_file),
+        )
+
     def _store_job(self, job: dict[str, object]) -> dict[str, object]:
         self._write_json(self._job_file(str(job.get("id"))), job)
         return job
@@ -462,7 +501,7 @@ class JobService:
         )
 
     def fail_inline_job(self, job_id: str, error: object) -> None:
-        failed = self._update_job(job_id, status="failed", error={"message": str(error)})
+        failed = self._update_job(job_id, status="failed", error=_error_payload(error, default_status_code=502))
         if failed is None:
             return
         with logger.task_context(Path(str(failed.get("log_path") or self._task_log_file(failed.get("created_at"), job_id)))):
@@ -621,6 +660,37 @@ class JobService:
             is_blocked=is_blocked,
         )
 
+    def list_image_conversations(self, principal: AuthPrincipal) -> list[dict[str, object]]:
+        return self.metadata_db.list_image_conversations(api_key_id=principal.key_id)
+
+    def save_image_conversation(
+            self,
+            conversation: dict[str, object],
+            principal: AuthPrincipal,
+    ) -> dict[str, object]:
+        return self.metadata_db.upsert_image_conversation(
+            conversation,
+            api_key_id=principal.key_id,
+            api_key_name=principal.name,
+        )
+
+    def replace_image_conversations(
+            self,
+            conversations: list[dict[str, object]],
+            principal: AuthPrincipal,
+    ) -> list[dict[str, object]]:
+        return self.metadata_db.replace_image_conversations(
+            conversations,
+            api_key_id=principal.key_id,
+            api_key_name=principal.name,
+        )
+
+    def delete_image_conversation(self, conversation_id: str, principal: AuthPrincipal) -> bool:
+        return self.metadata_db.delete_image_conversation(conversation_id, api_key_id=principal.key_id)
+
+    def clear_image_conversations(self, principal: AuthPrincipal) -> None:
+        self.metadata_db.clear_image_conversations(api_key_id=principal.key_id)
+
     def get_job(self, job_id: str, principal: AuthPrincipal) -> dict[str, object] | None:
         job = self._assert_job_access(self._load_job(job_id), principal)
         if job is None:
@@ -661,15 +731,19 @@ class JobService:
                 raise ValueError("prompt is required")
             response_format = _clean_text(payload.get("response_format")) or None
             base_url = config.base_url or None
-            return self.chatgpt_service.generate_with_pool(
-                prompt,
-                _clean_text(payload.get("model")) or "gpt-image-2",
-                max(1, int(payload.get("n") or 1)),
-                normalize_image_size(payload.get("size")),
-                response_format,
-                base_url,
-                request_id=str(job.get("id") or ""),
-                quality=normalize_image_quality(payload.get("quality")),
+            return self._execute_streaming_image_job(
+                job,
+                self.chatgpt_service.stream_image_generation(
+                    prompt,
+                    _clean_text(payload.get("model")) or "gpt-image-2",
+                    max(1, int(payload.get("n") or 1)),
+                    normalize_image_size(payload.get("size")),
+                    response_format,
+                    base_url,
+                    quality=normalize_image_quality(payload.get("quality")),
+                    request_id=str(job.get("id") or "") or None,
+                ),
+                fallback_error="image generation failed",
             )
         if job_type == "images.edits":
             prompt = _clean_text(payload.get("prompt"))
@@ -680,17 +754,62 @@ class JobService:
                 raise ValueError("images is required")
             response_format = _clean_text(payload.get("response_format")) or None
             base_url = config.base_url or None
-            return self.chatgpt_service.edit_with_pool(
-                prompt,
-                images,
-                _clean_text(payload.get("model")) or "gpt-image-2",
-                max(1, int(payload.get("n") or 1)),
-                _clean_text(payload.get("size")) or None,
-                response_format,
-                base_url,
-                request_id=str(job.get("id") or ""),
+            return self._execute_streaming_image_job(
+                job,
+                self.chatgpt_service.stream_image_edit(
+                    prompt,
+                    images,
+                    _clean_text(payload.get("model")) or "gpt-image-2",
+                    max(1, int(payload.get("n") or 1)),
+                    _clean_text(payload.get("size")) or None,
+                    response_format,
+                    base_url,
+                    request_id=str(job.get("id") or "") or None,
+                ),
+                fallback_error="image edit failed",
             )
         raise ValueError(f"unsupported async job type: {job_type}")
+
+    def _execute_streaming_image_job(
+            self,
+            job: dict[str, object],
+            chunks,
+            *,
+            fallback_error: str,
+    ) -> dict[str, object]:
+        created = None
+        image_items: list[dict[str, object]] = []
+        chunk_iterator = iter(chunks)
+        while True:
+            try:
+                chunk = next(chunk_iterator)
+            except StopIteration:
+                break
+            except Exception as exc:
+                if image_items:
+                    logger.warning({
+                        "event": "async_image_job_partial_success_after_error",
+                        "job_id": job.get("id"),
+                        "result_count": len(image_items),
+                        "error": str(exc),
+                    })
+                    break
+                raise
+            if not isinstance(chunk, dict):
+                continue
+            data = chunk.get("data")
+            if not isinstance(data, list) or not data:
+                continue
+            next_items = [item for item in data if isinstance(item, dict)]
+            if not next_items:
+                continue
+            if created is None:
+                created = chunk.get("created")
+            self._store_partial_image_result(job, chunk)
+            image_items.extend(next_items)
+        if not image_items:
+            raise ValueError(fallback_error)
+        return {"created": created, "data": image_items}
 
     def _run_job(self, job_id: str) -> None:
         running = self._update_job(job_id, status="running", error=None)
@@ -729,7 +848,7 @@ class JobService:
                 failed = self._update_job(
                     job_id,
                     status="failed",
-                    error={"message": str(exc)},
+                    error=_error_payload(exc, default_status_code=502),
                 )
                 logger.error({
                     "event": "async_job_failed",

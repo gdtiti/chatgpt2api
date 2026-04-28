@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -13,6 +14,7 @@ import api.app as app_module
 import api.support as support_module
 from api import create_app
 from services.api_key_service import APIKeyService
+from services.chatgpt_service import ImageGenerationError
 from services.job_service import JobService
 from utils.log import logger
 
@@ -107,6 +109,7 @@ class _DelayedChatGPTService:
         response_format: str | None = "b64_json",
         base_url: str | None = None,
         quality: str | None = None,
+        request_id: str | None = None,
     ):
         time.sleep(self.delay)
         self.last_image_generation = {
@@ -116,7 +119,7 @@ class _DelayedChatGPTService:
             "size": size,
             "response_format": response_format,
             "base_url": base_url,
-            "request_id": None,
+            "request_id": request_id,
             "quality": quality,
         }
         yield {
@@ -141,6 +144,7 @@ class _DelayedChatGPTService:
         size: str | None = None,
         response_format: str | None = "b64_json",
         base_url: str | None = None,
+        request_id: str | None = None,
     ):
         image_items = list(images)
         time.sleep(self.delay)
@@ -151,7 +155,7 @@ class _DelayedChatGPTService:
             "size": size,
             "response_format": response_format,
             "base_url": base_url,
-            "request_id": None,
+            "request_id": request_id,
             "image_count": len(image_items),
         }
         yield {
@@ -224,7 +228,85 @@ class _AvailableAccountService:
         return True
 
 
+class _PartialImageChatGPTService(_DelayedChatGPTService):
+    def __init__(self) -> None:
+        super().__init__(delay=0.0)
+        self.first_yielded = threading.Event()
+        self.release_second = threading.Event()
+
+    def stream_image_generation(
+        self,
+        prompt: str,
+        model: str,
+        n: int,
+        size: str | None = None,
+        response_format: str | None = "b64_json",
+        base_url: str | None = None,
+        quality: str | None = None,
+        request_id: str | None = None,
+    ):
+        yield {
+            "object": "image.generation.result",
+            "created": 1,
+            "model": model,
+            "index": 1,
+            "total": n,
+            "data": [{"b64_json": "Zmlyc3Q=", "revised_prompt": prompt}],
+        }
+        self.first_yielded.set()
+        self.release_second.wait(timeout=5.0)
+        yield {
+            "object": "image.generation.result",
+            "created": 1,
+            "model": model,
+            "index": 2,
+            "total": n,
+            "data": [{"b64_json": "c2Vjb25k", "revised_prompt": prompt}],
+        }
+
+
+class _FailingImageChatGPTService(_DelayedChatGPTService):
+    def stream_image_generation(self, *_args, **_kwargs):
+        raise ImageGenerationError("no downloadable image result found; conversation_id=test, file_ids=[], sediment_ids=[]")
+        yield
+
+    def generate_with_pool(self, *_args, **_kwargs):
+        raise ImageGenerationError("no downloadable image result found; conversation_id=test, file_ids=[], sediment_ids=[]")
+
+
+class _PartialThenFailingImageChatGPTService(_DelayedChatGPTService):
+    def stream_image_generation(self, prompt: str, model: str, n: int, *_args, **_kwargs):
+        yield {
+            "object": "image.generation.result",
+            "created": 1,
+            "model": model,
+            "index": 1,
+            "total": n,
+            "data": [{"b64_json": "cGFydGlhbA==", "revised_prompt": prompt}],
+        }
+        raise ImageGenerationError("no downloadable image result found; conversation_id=test, file_ids=[], sediment_ids=[]")
+
+
 class AsyncJobRouteTests(unittest.TestCase):
+    @staticmethod
+    def _iter_sse_events(stream_response):
+        event_name = "message"
+        for line in stream_response.iter_lines():
+            if not line:
+                continue
+            text = line.decode("utf-8") if isinstance(line, bytes) else line
+            if text.startswith("event:"):
+                event_name = text[6:].strip() or "message"
+                continue
+            if not text.startswith("data:"):
+                continue
+            payload = text[5:].strip()
+            if payload == "[DONE]":
+                yield "done", payload
+                return
+            yield event_name, json.loads(payload)
+            event_name = "message"
+
     def test_empty_metadata_backfill_is_attempted_once_per_scope(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             api_key_service = APIKeyService(Path(tmp_dir) / "api_keys.json", admin_key_provider=lambda: "chatgpt2api")
@@ -612,6 +694,85 @@ class AsyncJobRouteTests(unittest.TestCase):
                 job_service.shutdown(wait=False)
                 logger.set_system_log_path(old_system_log_path)
 
+    def test_image_conversations_are_persisted_per_api_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            api_key_service = APIKeyService(Path(tmp_dir) / "api_keys.json", admin_key_provider=lambda: "chatgpt2api")
+            first_key = api_key_service.create_key(name="first-client")["plain_text"]
+            second_key = api_key_service.create_key(name="second-client")["plain_text"]
+            fake_chatgpt_service = _DelayedChatGPTService(delay=0.0)
+            old_system_log_path = logger.system_log_path
+            logger.set_system_log_path(Path(tmp_dir) / "system.log")
+            job_service = JobService(
+                Path(tmp_dir) / "jobs",
+                Path(tmp_dir) / "job_results",
+                fake_chatgpt_service,
+                task_logs_dir=Path(tmp_dir) / "task_logs",
+                max_workers=1,
+            )
+
+            old_support_service = support_module.api_key_service
+            old_app_service = app_module.api_key_service
+            try:
+                support_module.api_key_service = api_key_service
+                app_module.api_key_service = api_key_service
+                client = TestClient(create_app(chatgpt_service=fake_chatgpt_service, job_service=job_service))
+                conversation = {
+                    "id": "conversation-1",
+                    "title": "persistent image chat",
+                    "createdAt": "2026-04-28T00:00:00Z",
+                    "updatedAt": "2026-04-28T00:01:00Z",
+                    "turns": [{
+                        "id": "turn-1",
+                        "prompt": "draw",
+                        "model": "gpt-image-2",
+                        "mode": "generate",
+                        "requestMode": "async_sse",
+                        "count": 1,
+                        "referenceImages": [],
+                        "images": [{"id": "image-1", "status": "success", "url": "/api/view/data/demo.png"}],
+                        "createdAt": "2026-04-28T00:01:00Z",
+                        "status": "success",
+                    }],
+                }
+
+                save_response = client.put(
+                    "/api/image/conversations/conversation-1",
+                    headers={"Authorization": f"Bearer {first_key}"},
+                    json={"conversation": conversation},
+                )
+                self.assertEqual(save_response.status_code, 200)
+
+                first_response = client.get(
+                    "/api/image/conversations",
+                    headers={"Authorization": f"Bearer {first_key}"},
+                )
+                self.assertEqual(first_response.status_code, 200)
+                self.assertEqual(first_response.json()["items"], [conversation])
+
+                second_response = client.get(
+                    "/api/image/conversations",
+                    headers={"Authorization": f"Bearer {second_key}"},
+                )
+                self.assertEqual(second_response.status_code, 200)
+                self.assertEqual(second_response.json()["items"], [])
+
+                delete_response = client.delete(
+                    "/api/image/conversations/conversation-1",
+                    headers={"Authorization": f"Bearer {first_key}"},
+                )
+                self.assertEqual(delete_response.status_code, 200)
+                self.assertTrue(delete_response.json()["deleted"])
+                empty_response = client.get(
+                    "/api/image/conversations",
+                    headers={"Authorization": f"Bearer {first_key}"},
+                )
+                self.assertEqual(empty_response.json()["items"], [])
+            finally:
+                support_module.api_key_service = old_support_service
+                app_module.api_key_service = old_app_service
+                job_service.shutdown(wait=False)
+                logger.set_system_log_path(old_system_log_path)
+
     def test_async_job_writes_task_log_and_system_log(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             api_key_service = APIKeyService(Path(tmp_dir) / "api_keys.json", admin_key_provider=lambda: "chatgpt2api")
@@ -834,6 +995,46 @@ class AsyncJobRouteTests(unittest.TestCase):
                 job_service.shutdown(wait=False)
                 logger.set_system_log_path(old_system_log_path)
 
+    def test_openai_image_api_failure_returns_structured_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            api_key_service = APIKeyService(Path(tmp_dir) / "api_keys.json", admin_key_provider=lambda: "chatgpt2api")
+            created = api_key_service.create_key(name="sync-failure-client", allowed_models=["gpt-image-2"])
+            client_key = created["plain_text"]
+            fake_chatgpt_service = _FailingImageChatGPTService(delay=0.0)
+            old_system_log_path = logger.system_log_path
+            logger.set_system_log_path(Path(tmp_dir) / "system.log")
+            job_service = JobService(
+                Path(tmp_dir) / "jobs",
+                Path(tmp_dir) / "job_results",
+                fake_chatgpt_service,
+                task_logs_dir=Path(tmp_dir) / "task_logs",
+                max_workers=1,
+            )
+
+            old_support_service = support_module.api_key_service
+            old_app_service = app_module.api_key_service
+            try:
+                support_module.api_key_service = api_key_service
+                app_module.api_key_service = api_key_service
+                client = TestClient(create_app(chatgpt_service=fake_chatgpt_service, job_service=job_service))
+
+                response = client.post(
+                    "/v1/images/generations",
+                    headers={"Authorization": f"Bearer {client_key}"},
+                    json={"model": "gpt-image-2", "prompt": "sync fail", "n": 1},
+                )
+
+                self.assertEqual(response.status_code, 502)
+                detail = response.json()["detail"]
+                self.assertEqual(detail["code"], "image_result_not_found")
+                self.assertEqual(detail["status_code"], 502)
+                self.assertIn("no downloadable image result found", detail["message"])
+            finally:
+                support_module.api_key_service = old_support_service
+                app_module.api_key_service = old_app_service
+                job_service.shutdown(wait=False)
+                logger.set_system_log_path(old_system_log_path)
+
     def test_non_stream_openai_image_api_creates_task_gallery_and_waterfall_records(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             api_key_service = APIKeyService(Path(tmp_dir) / "api_keys.json", admin_key_provider=lambda: "chatgpt2api")
@@ -891,6 +1092,180 @@ class AsyncJobRouteTests(unittest.TestCase):
                 wall_response = client.get("/api/gallery/wall", headers={"Authorization": f"Bearer {client_key}"})
                 self.assertEqual(wall_response.status_code, 200)
                 self.assertEqual(wall_response.json()["total"], 1)
+            finally:
+                support_module.api_key_service = old_support_service
+                app_module.api_key_service = old_app_service
+                job_service.shutdown(wait=False)
+                logger.set_system_log_path(old_system_log_path)
+
+    def test_async_image_job_streams_partial_results_before_completion(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            api_key_service = APIKeyService(Path(tmp_dir) / "api_keys.json", admin_key_provider=lambda: "chatgpt2api")
+            created = api_key_service.create_key(name="partial-client", allowed_models=["gpt-image-2"])
+            client_key = created["plain_text"]
+            fake_chatgpt_service = _PartialImageChatGPTService()
+            old_system_log_path = logger.system_log_path
+            logger.set_system_log_path(Path(tmp_dir) / "system.log")
+            job_service = JobService(
+                Path(tmp_dir) / "jobs",
+                Path(tmp_dir) / "job_results",
+                fake_chatgpt_service,
+                task_logs_dir=Path(tmp_dir) / "task_logs",
+                max_workers=1,
+            )
+
+            old_support_service = support_module.api_key_service
+            old_app_service = app_module.api_key_service
+            try:
+                support_module.api_key_service = api_key_service
+                app_module.api_key_service = api_key_service
+                client = TestClient(create_app(chatgpt_service=fake_chatgpt_service, job_service=job_service))
+
+                submit_response = client.post(
+                    "/api/async/jobs",
+                    headers={"Authorization": f"Bearer {client_key}"},
+                    json={
+                        "type": "images.generations",
+                        "payload": {"model": "gpt-image-2", "prompt": "partial image", "n": 2},
+                    },
+                )
+                self.assertEqual(submit_response.status_code, 200)
+                job_id = submit_response.json()["job"]["id"]
+
+                with client.stream(
+                    "GET",
+                    f"/api/async/jobs/{job_id}/events?ping_interval=1",
+                    headers={"Authorization": f"Bearer {client_key}"},
+                ) as stream_response:
+                    self.assertEqual(stream_response.status_code, 200)
+                    events = []
+                    for event_name, payload in self._iter_sse_events(stream_response):
+                        events.append((event_name, payload))
+                        if event_name == "partial_result":
+                            result = payload["result"]
+                            self.assertEqual(len(result["data"]), 1)
+                            self.assertEqual(result["data"][0]["b64_json"], "Zmlyc3Q=")
+                            fake_chatgpt_service.release_second.set()
+                        if event_name == "done":
+                            break
+
+                result_events = [payload for event_name, payload in events if event_name == "result"]
+                self.assertTrue(result_events)
+                self.assertEqual(len(result_events[-1]["result"]["data"]), 2)
+                self.assertTrue(any(event_name == "partial_result" for event_name, _ in events))
+            finally:
+                fake_chatgpt_service.release_second.set()
+                support_module.api_key_service = old_support_service
+                app_module.api_key_service = old_app_service
+                job_service.shutdown(wait=False)
+                logger.set_system_log_path(old_system_log_path)
+
+    def test_async_image_job_keeps_partial_result_when_later_image_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            api_key_service = APIKeyService(Path(tmp_dir) / "api_keys.json", admin_key_provider=lambda: "chatgpt2api")
+            created = api_key_service.create_key(name="partial-failure-client", allowed_models=["gpt-image-2"])
+            client_key = created["plain_text"]
+            fake_chatgpt_service = _PartialThenFailingImageChatGPTService(delay=0.0)
+            old_system_log_path = logger.system_log_path
+            logger.set_system_log_path(Path(tmp_dir) / "system.log")
+            job_service = JobService(
+                Path(tmp_dir) / "jobs",
+                Path(tmp_dir) / "job_results",
+                fake_chatgpt_service,
+                task_logs_dir=Path(tmp_dir) / "task_logs",
+                max_workers=1,
+            )
+
+            old_support_service = support_module.api_key_service
+            old_app_service = app_module.api_key_service
+            try:
+                support_module.api_key_service = api_key_service
+                app_module.api_key_service = api_key_service
+                client = TestClient(create_app(chatgpt_service=fake_chatgpt_service, job_service=job_service))
+
+                submit_response = client.post(
+                    "/api/async/jobs",
+                    headers={"Authorization": f"Bearer {client_key}"},
+                    json={
+                        "type": "images.generations",
+                        "payload": {"model": "gpt-image-2", "prompt": "partial then fail", "n": 2},
+                    },
+                )
+                self.assertEqual(submit_response.status_code, 200)
+                job_id = submit_response.json()["job"]["id"]
+
+                deadline = time.time() + 3
+                result_response = None
+                while time.time() < deadline:
+                    result_response = client.get(
+                        f"/api/async/jobs/{job_id}/result",
+                        headers={"Authorization": f"Bearer {client_key}"},
+                    )
+                    if result_response.status_code == 200:
+                        break
+                    time.sleep(0.05)
+
+                self.assertIsNotNone(result_response)
+                assert result_response is not None
+                self.assertEqual(result_response.status_code, 200)
+                payload = result_response.json()
+                self.assertEqual(payload["job"]["status"], "succeeded")
+                self.assertEqual(payload["job"]["result_count"], 1)
+                self.assertEqual(payload["result"]["data"][0]["b64_json"], "cGFydGlhbA==")
+            finally:
+                support_module.api_key_service = old_support_service
+                app_module.api_key_service = old_app_service
+                job_service.shutdown(wait=False)
+                logger.set_system_log_path(old_system_log_path)
+
+    def test_async_image_job_failure_sse_returns_error_code_and_done(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            api_key_service = APIKeyService(Path(tmp_dir) / "api_keys.json", admin_key_provider=lambda: "chatgpt2api")
+            created = api_key_service.create_key(name="failure-client", allowed_models=["gpt-image-2"])
+            client_key = created["plain_text"]
+            fake_chatgpt_service = _FailingImageChatGPTService(delay=0.0)
+            old_system_log_path = logger.system_log_path
+            logger.set_system_log_path(Path(tmp_dir) / "system.log")
+            job_service = JobService(
+                Path(tmp_dir) / "jobs",
+                Path(tmp_dir) / "job_results",
+                fake_chatgpt_service,
+                task_logs_dir=Path(tmp_dir) / "task_logs",
+                max_workers=1,
+            )
+
+            old_support_service = support_module.api_key_service
+            old_app_service = app_module.api_key_service
+            try:
+                support_module.api_key_service = api_key_service
+                app_module.api_key_service = api_key_service
+                client = TestClient(create_app(chatgpt_service=fake_chatgpt_service, job_service=job_service))
+
+                submit_response = client.post(
+                    "/api/async/jobs",
+                    headers={"Authorization": f"Bearer {client_key}"},
+                    json={
+                        "type": "images.generations",
+                        "payload": {"model": "gpt-image-2", "prompt": "fail image", "n": 1},
+                    },
+                )
+                self.assertEqual(submit_response.status_code, 200)
+                job_id = submit_response.json()["job"]["id"]
+
+                with client.stream(
+                    "GET",
+                    f"/api/async/jobs/{job_id}/events?ping_interval=1",
+                    headers={"Authorization": f"Bearer {client_key}"},
+                ) as stream_response:
+                    self.assertEqual(stream_response.status_code, 200)
+                    events = list(self._iter_sse_events(stream_response))
+
+                error_events = [payload for event_name, payload in events if event_name == "error"]
+                self.assertTrue(error_events)
+                self.assertEqual(error_events[-1]["error"]["code"], "image_result_not_found")
+                self.assertEqual(error_events[-1]["error"]["status_code"], 502)
+                self.assertIn("no downloadable image result found", error_events[-1]["error"]["message"])
+                self.assertEqual(events[-1][0], "done")
             finally:
                 support_module.api_key_service = old_support_service
                 app_module.api_key_service = old_app_service

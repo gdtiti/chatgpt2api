@@ -58,18 +58,54 @@ def parse_sse_lines(response: requests.Response) -> Iterator[Dict[str, Any]]:
             yield {"raw": payload}
 
 
+def _image_stream_error_code(message: object) -> str:
+    text = str(message or "").lower()
+    if "no downloadable image result found" in text:
+        return "image_result_not_found"
+    if "no available image quota" in text:
+        return "image_quota_unavailable"
+    return "stream_error"
+
+
+def _exception_error_payload(exc: Exception, *, default_status_code: int = 502) -> dict[str, object]:
+    status_code = int(getattr(exc, "status_code", default_status_code) or default_status_code)
+    detail = getattr(exc, "detail", None)
+    if isinstance(detail, dict):
+        raw_message = detail.get("message") or detail.get("error") or str(exc)
+        code = str(detail.get("code") or getattr(exc, "code", "") or _image_stream_error_code(raw_message))
+        status_code = int(detail.get("status_code") or status_code)
+    else:
+        raw_message = str(detail or exc)
+        code = str(getattr(exc, "code", "") or _image_stream_error_code(raw_message))
+    message = str(raw_message or "stream error")
+    return {
+        "error": {
+            "message": message,
+            "code": code,
+            "status_code": status_code,
+            "type": exc.__class__.__name__,
+        },
+        "message": message,
+        "code": code,
+        "status_code": status_code,
+    }
+
+
 def sse_json_stream(items) -> Iterator[str]:
     yield ": stream-open\n\n"
     try:
         for item in items:
             yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
     except Exception as exc:
+        error_payload = _exception_error_payload(exc)
         logger.warning({
             "event": "sse_stream_error",
             "error_type": exc.__class__.__name__,
             "error": str(exc),
+            "status_code": error_payload["status_code"],
         })
-        yield f"data: {json.dumps({'error': {'message': str(exc), 'type': exc.__class__.__name__}}, ensure_ascii=False)}\n\n"
+        yield "event: error\n"
+        yield f"data: {json.dumps(error_payload, ensure_ascii=False)}\n\n"
     yield "data: [DONE]\n\n"
 
 
@@ -85,11 +121,13 @@ def responses_sse_stream(items) -> Iterator[str]:
             yield f"event: {event_name}\n"
             yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
     except Exception as exc:
-        error_payload = {"type": "error", "error": {"message": str(exc), "type": exc.__class__.__name__}}
+        error_detail = _exception_error_payload(exc)
+        error_payload = {"type": "error", **error_detail}
         logger.warning({
             "event": "responses_sse_stream_error",
             "error_type": exc.__class__.__name__,
             "error": str(exc),
+            "status_code": error_detail["status_code"],
         })
         yield "event: error\n"
         yield f"data: {json.dumps(error_payload, ensure_ascii=False)}\n\n"

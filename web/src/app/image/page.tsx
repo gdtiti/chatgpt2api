@@ -27,6 +27,7 @@ import {
   deleteImageConversation,
   getImageConversationStats,
   listImageConversations,
+  saveImageConversation,
   saveImageConversations,
   type ImageConversation,
   type ImageConversationMode,
@@ -203,7 +204,12 @@ function normalizeStoredImageResult(item: unknown, fallbackId: string): StoredIm
   };
 }
 
-function buildTurnImagesFromResult(turn: ImageTurn, result: unknown): { images: StoredImage[]; failedCount: number } {
+function buildTurnImagesFromResult(
+  turn: ImageTurn,
+  result: unknown,
+  options: { final?: boolean } = {},
+): { images: StoredImage[]; failedCount: number } {
+  const final = options.final !== false;
   const data =
     result && typeof result === "object" && Array.isArray((result as { data?: unknown[] }).data)
       ? (result as { data: Array<Record<string, unknown>> }).data
@@ -213,6 +219,9 @@ function buildTurnImagesFromResult(turn: ImageTurn, result: unknown): { images: 
     const normalized = normalizeStoredImageResult(data[index], image.id);
     if (normalized) {
       return normalized;
+    }
+    if (!final) {
+      return image;
     }
     return {
       id: image.id,
@@ -233,6 +242,33 @@ function buildTurnImagesFromResult(turn: ImageTurn, result: unknown): { images: 
     images,
     failedCount: images.filter((item) => item.status === "error").length,
   };
+}
+
+function extractAsyncEventError(payload: unknown, fallback: string) {
+  if (!payload || typeof payload !== "object") {
+    return fallback;
+  }
+  const eventPayload = payload as {
+    error?: string | { message?: string; code?: string; status_code?: number };
+    message?: string;
+    job?: { error?: { message?: string; code?: string; status_code?: number } };
+  };
+  if (typeof eventPayload.error === "string" && eventPayload.error.trim()) {
+    return eventPayload.error;
+  }
+  const errorMessage =
+    (typeof eventPayload.error === "object" ? eventPayload.error?.message : "") ||
+    eventPayload.job?.error?.message ||
+    eventPayload.message ||
+    fallback;
+  const statusCode =
+    (typeof eventPayload.error === "object" ? eventPayload.error?.status_code : undefined) ||
+    eventPayload.job?.error?.status_code;
+  const code =
+    (typeof eventPayload.error === "object" ? eventPayload.error?.code : undefined) ||
+    eventPayload.job?.error?.code;
+  const suffix = [code, statusCode ? `HTTP ${statusCode}` : ""].filter(Boolean).join(" / ");
+  return suffix ? `${errorMessage} (${suffix})` : errorMessage;
 }
 
 async function recoverAsyncJobResult(jobId: string, fallbackError: string): Promise<unknown> {
@@ -602,7 +638,7 @@ export default function ImagePage() {
     ]);
     conversationsRef.current = nextConversations;
     setConversations(nextConversations);
-    await saveImageConversations(nextConversations);
+    await saveImageConversation(conversation);
   };
 
   const updateConversation = useCallback(
@@ -620,7 +656,7 @@ export default function ImagePage() {
       conversationsRef.current = nextConversations;
       setConversations(nextConversations);
       if (options.persist !== false) {
-        await saveImageConversations(nextConversations);
+        await saveImageConversation(nextConversation);
       }
     },
     [],
@@ -885,13 +921,38 @@ export default function ImagePage() {
         try {
           await streamAsyncJobEvents(createdJob.job.id, {
             onEvent: (event, payload) => {
+              if (event === "partial_result" && payload && typeof payload === "object") {
+                const partialResult = (payload as { result?: unknown }).result;
+                void updateConversation(
+                  conversationId,
+                  (current) => {
+                    const conversation = current ?? snapshot;
+                    return {
+                      ...conversation,
+                      updatedAt: new Date().toISOString(),
+                      turns: conversation.turns.map((turn) => {
+                        if (turn.id !== queuedTurn.id) {
+                          return turn;
+                        }
+                        const { images } = buildTurnImagesFromResult(turn, partialResult, { final: false });
+                        return {
+                          ...turn,
+                          asyncJobId: createdJob.job.id,
+                          images,
+                          status: "generating",
+                          error: undefined,
+                        };
+                      }),
+                    };
+                  },
+                  { persist: false },
+                );
+              }
               if (event === "result" && payload && typeof payload === "object") {
                 finalResult = (payload as { result?: unknown }).result;
               }
-              if (event === "error" && payload && typeof payload === "object") {
-                const directError = (payload as { error?: string }).error;
-                const jobError = (payload as { job?: { error?: { message?: string } } }).job?.error?.message;
-                finalError = String(jobError || directError || "异步任务失败");
+              if (event === "error") {
+                finalError = extractAsyncEventError(payload, "异步任务失败");
               }
             },
           });

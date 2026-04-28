@@ -25,6 +25,16 @@ class GalleryImageStateRequest(BaseModel):
     is_blocked: bool | None = None
 
 
+class ImageConversationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    conversation: dict[str, Any]
+
+
+class ImageConversationListRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    items: list[dict[str, Any]] = Field(default_factory=list)
+
+
 def _sse_line(event: str, payload: dict[str, object]) -> bytes:
     return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n".encode("utf-8")
 
@@ -35,6 +45,26 @@ def _coerce_positive_int(value: object, default: int = 1) -> int:
     except (TypeError, ValueError):
         return default
     return parsed if parsed > 0 else default
+
+
+def _job_error_payload(job_id: str, job: dict[str, object] | None, message: str = "job failed") -> dict[str, object]:
+    error = job.get("error") if isinstance(job, dict) else None
+    error = error if isinstance(error, dict) else {}
+    error_message = str(error.get("message") or message)
+    status_code = int(error.get("status_code") or 500)
+    code = str(error.get("code") or "job_failed")
+    return {
+        "job_id": job_id,
+        "job": job,
+        "error": {
+            "message": error_message,
+            "code": code,
+            "status_code": status_code,
+        },
+        "message": error_message,
+        "code": code,
+        "status_code": status_code,
+    }
 
 
 def create_router(job_service: JobService) -> APIRouter:
@@ -151,6 +181,47 @@ def create_router(job_service: JobService) -> APIRouter:
             raise HTTPException(status_code=404, detail={"error": "image not found"})
         return {"item": item}
 
+    @router.get("/api/image/conversations")
+    async def list_image_conversations(authorization: str | None = Header(default=None)):
+        principal = require_client_principal(authorization)
+        return {"items": job_service.list_image_conversations(principal)}
+
+    @router.put("/api/image/conversations")
+    async def replace_image_conversations(
+            body: ImageConversationListRequest,
+            authorization: str | None = Header(default=None),
+    ):
+        principal = require_client_principal(authorization)
+        items = job_service.replace_image_conversations(body.items, principal)
+        return {"items": items}
+
+    @router.put("/api/image/conversations/{conversation_id}")
+    async def save_image_conversation(
+            conversation_id: str,
+            body: ImageConversationRequest,
+            authorization: str | None = Header(default=None),
+    ):
+        principal = require_client_principal(authorization)
+        body_conversation_id = str(body.conversation.get("id") or "").strip()
+        if not body_conversation_id:
+            body.conversation["id"] = conversation_id
+        elif body_conversation_id != conversation_id:
+            raise HTTPException(status_code=400, detail={"error": "conversation id mismatch"})
+        item = job_service.save_image_conversation(body.conversation, principal)
+        return {"item": item}
+
+    @router.delete("/api/image/conversations/{conversation_id}")
+    async def delete_image_conversation(conversation_id: str, authorization: str | None = Header(default=None)):
+        principal = require_client_principal(authorization)
+        deleted = job_service.delete_image_conversation(conversation_id, principal)
+        return {"deleted": deleted}
+
+    @router.delete("/api/image/conversations")
+    async def clear_image_conversations(authorization: str | None = Header(default=None)):
+        principal = require_client_principal(authorization)
+        job_service.clear_image_conversations(principal)
+        return {"deleted": True}
+
     @router.get("/api/async/jobs/{job_id}")
     async def get_job(job_id: str, authorization: str | None = Header(default=None)):
         principal = require_client_principal(authorization)
@@ -196,22 +267,39 @@ def create_router(job_service: JobService) -> APIRouter:
 
         def event_stream():
             last_status = ""
+            last_result_count = 0
             while True:
                 job, result = job_service.get_job_result(job_id, principal)
                 if job is None:
-                    yield _sse_line("error", {"job_id": job_id, "error": "job not found"})
+                    yield _sse_line(
+                        "error",
+                        {
+                            "job_id": job_id,
+                            "error": {"message": "job not found", "code": "job_not_found", "status_code": 404},
+                            "message": "job not found",
+                            "code": "job_not_found",
+                            "status_code": 404,
+                        },
+                    )
                     return
                 status = str(job.get("status") or "")
                 if status != last_status:
                     yield _sse_line("status", {"job": job})
                     last_status = status
+                result_count = int(job.get("result_count") or 0)
+                if status in {"queued", "running"} and result_count > last_result_count and isinstance(result, dict):
+                    yield _sse_line(
+                        "partial_result",
+                        {"job": job, "result": result.get("result"), "result_count": result_count},
+                    )
+                    last_result_count = result_count
                 yield _sse_line("ping", {"job_id": job_id, "status": status, "ts": int(time.time())})
                 if status == "succeeded":
                     yield _sse_line("result", {"job": job, "result": result.get("result") if isinstance(result, dict) else None})
                     yield b"data: [DONE]\n\n"
                     return
                 if status == "failed":
-                    yield _sse_line("error", {"job": job})
+                    yield _sse_line("error", _job_error_payload(job_id, job))
                     yield b"data: [DONE]\n\n"
                     return
                 time.sleep(ping_interval)

@@ -2,6 +2,7 @@
 
 import localforage from "localforage";
 
+import { httpRequest } from "@/lib/request";
 import type { ImageModel, ImageQuality } from "@/lib/api";
 
 export type ImageConversationMode = "generate" | "edit";
@@ -221,41 +222,72 @@ async function readStoredImageConversations(): Promise<ImageConversation[]> {
   return items.map(normalizeConversation);
 }
 
+async function clearLegacyStoredImageConversations(): Promise<void> {
+  await imageConversationStorage.removeItem(IMAGE_CONVERSATIONS_KEY);
+}
+
 export async function listImageConversations(): Promise<ImageConversation[]> {
-  return sortImageConversations(await readStoredImageConversations());
+  const response = await httpRequest<{ items: Array<ImageConversation & Record<string, unknown>> }>(
+    "/api/image/conversations",
+  );
+  const remoteItems = sortImageConversations((response.items || []).map(normalizeConversation));
+  if (remoteItems.length > 0) {
+    return remoteItems;
+  }
+
+  const legacyItems = sortImageConversations(await readStoredImageConversations());
+  if (legacyItems.length === 0) {
+    return [];
+  }
+
+  await saveImageConversations(legacyItems);
+  await clearLegacyStoredImageConversations();
+  return legacyItems;
 }
 
 export async function saveImageConversations(conversations: ImageConversation[]): Promise<void> {
   await queueImageConversationWrite(async () => {
     const normalizedItems = sortImageConversations(conversations.map(normalizeConversation));
-    await imageConversationStorage.setItem(IMAGE_CONVERSATIONS_KEY, normalizedItems);
+    await httpRequest<{ items: ImageConversation[] }>("/api/image/conversations", {
+      method: "PUT",
+      body: { items: normalizedItems },
+    });
+    await clearLegacyStoredImageConversations();
   });
 }
 
 export async function saveImageConversation(conversation: ImageConversation): Promise<void> {
   await queueImageConversationWrite(async () => {
-    const items = await readStoredImageConversations();
-    const nextItems = sortImageConversations([
-      normalizeConversation(conversation),
-      ...items.filter((item) => item.id !== conversation.id),
-    ]);
-    await imageConversationStorage.setItem(IMAGE_CONVERSATIONS_KEY, nextItems);
+    const normalized = normalizeConversation(conversation);
+    await httpRequest<{ item: ImageConversation }>(`/api/image/conversations/${encodeURIComponent(normalized.id)}`, {
+      method: "PUT",
+      body: { conversation: normalized },
+    });
+    await clearLegacyStoredImageConversations();
   });
 }
 
 export async function deleteImageConversation(id: string): Promise<void> {
   await queueImageConversationWrite(async () => {
+    await httpRequest<{ deleted: boolean }>(`/api/image/conversations/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
     const items = await readStoredImageConversations();
-    await imageConversationStorage.setItem(
-      IMAGE_CONVERSATIONS_KEY,
-      items.filter((item) => item.id !== id),
-    );
+    if (items.length > 0) {
+      await imageConversationStorage.setItem(
+        IMAGE_CONVERSATIONS_KEY,
+        items.filter((item) => item.id !== id),
+      );
+    }
   });
 }
 
 export async function clearImageConversations(): Promise<void> {
   await queueImageConversationWrite(async () => {
-    await imageConversationStorage.removeItem(IMAGE_CONVERSATIONS_KEY);
+    await httpRequest<{ deleted: boolean }>("/api/image/conversations", {
+      method: "DELETE",
+    });
+    await clearLegacyStoredImageConversations();
   });
 }
 

@@ -93,6 +93,7 @@ class MetadataDatabase:
             "accounts",
             "async_jobs",
             "gallery_images",
+            "image_conversations",
             "task_logs",
             "system_files",
             "request_logs",
@@ -101,7 +102,7 @@ class MetadataDatabase:
             """
             SELECT name
             FROM sqlite_master
-            WHERE type = 'table' AND name IN (?, ?, ?, ?, ?, ?, ?)
+            WHERE type = 'table' AND name IN (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             tuple(required_tables),
         ).fetchall()
@@ -221,6 +222,17 @@ class MetadataDatabase:
                             recorded_at TEXT NOT NULL,
                             UNIQUE(job_id, image_index)
                         );
+                        CREATE TABLE IF NOT EXISTS image_conversations (
+                            conversation_id TEXT NOT NULL,
+                            api_key_id TEXT NOT NULL,
+                            api_key_name TEXT,
+                            title TEXT,
+                            created_at TEXT,
+                            updated_at TEXT,
+                            payload_json TEXT NOT NULL,
+                            recorded_at TEXT NOT NULL,
+                            PRIMARY KEY(conversation_id, api_key_id)
+                        );
                         CREATE TABLE IF NOT EXISTS task_logs (
                             job_id TEXT PRIMARY KEY,
                             log_path TEXT NOT NULL,
@@ -254,6 +266,7 @@ class MetadataDatabase:
                         CREATE INDEX IF NOT EXISTS idx_gallery_job_updated ON gallery_images(job_id, updated_at);
                         CREATE INDEX IF NOT EXISTS idx_gallery_wall_order ON gallery_images(is_blocked, is_pinned, is_recommended, updated_at, id);
                         CREATE INDEX IF NOT EXISTS idx_gallery_scope_wall_order ON gallery_images(api_key_id, is_blocked, is_pinned, is_recommended, updated_at, id);
+                        CREATE INDEX IF NOT EXISTS idx_image_conversations_scope_updated ON image_conversations(api_key_id, updated_at);
                         """
                     )
                     self._ensure_column(connection, "gallery_images", "relative_path", "TEXT")
@@ -292,6 +305,14 @@ class MetadataDatabase:
         if not isinstance(payload, list):
             return []
         return [item for item in payload if isinstance(item, dict)]
+
+    @staticmethod
+    def _decode_json_object(value: object) -> dict[str, Any]:
+        try:
+            payload = json.loads(str(value or "{}"))
+        except Exception:
+            return {}
+        return payload if isinstance(payload, dict) else {}
 
     @staticmethod
     def _safe_sort(value: str | None, allowed: set[str], default: str) -> str:
@@ -398,6 +419,115 @@ class MetadataDatabase:
                 )
             if not current_ids:
                 connection.execute("DELETE FROM accounts")
+
+    def list_image_conversations(self, *, api_key_id: str) -> list[dict[str, Any]]:
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT payload_json
+                FROM image_conversations
+                WHERE api_key_id = ?
+                ORDER BY updated_at DESC, conversation_id DESC
+                """,
+                (api_key_id,),
+            ).fetchall()
+        return [
+            conversation
+            for row in rows
+            if (conversation := self._decode_json_object(row["payload_json"]))
+        ]
+
+    def upsert_image_conversation(
+            self,
+            conversation: dict[str, Any],
+            *,
+            api_key_id: str,
+            api_key_name: str,
+    ) -> dict[str, Any]:
+        conversation_id = str(conversation.get("id") or "").strip()
+        if not conversation_id:
+            raise ValueError("conversation id is required")
+        recorded_at = _utc_now()
+        created_at = str(conversation.get("createdAt") or conversation.get("created_at") or recorded_at)
+        updated_at = str(conversation.get("updatedAt") or conversation.get("updated_at") or created_at)
+        title = str(conversation.get("title") or "") or None
+        payload_json = json.dumps(conversation, ensure_ascii=False)
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO image_conversations(
+                    conversation_id, api_key_id, api_key_name, title, created_at, updated_at, payload_json, recorded_at
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(conversation_id, api_key_id) DO UPDATE SET
+                    api_key_name=excluded.api_key_name,
+                    title=excluded.title,
+                    created_at=excluded.created_at,
+                    updated_at=excluded.updated_at,
+                    payload_json=excluded.payload_json,
+                    recorded_at=excluded.recorded_at
+                """,
+                (
+                    conversation_id,
+                    api_key_id,
+                    api_key_name,
+                    title,
+                    created_at,
+                    updated_at,
+                    payload_json,
+                    recorded_at,
+                ),
+            )
+        return conversation
+
+    def replace_image_conversations(
+            self,
+            conversations: list[dict[str, Any]],
+            *,
+            api_key_id: str,
+            api_key_name: str,
+    ) -> list[dict[str, Any]]:
+        recorded_at = _utc_now()
+        normalized_items = [
+            item
+            for item in conversations
+            if isinstance(item, dict) and str(item.get("id") or "").strip()
+        ]
+        with self._lock, self._connect() as connection:
+            connection.execute("DELETE FROM image_conversations WHERE api_key_id = ?", (api_key_id,))
+            for item in normalized_items:
+                conversation_id = str(item.get("id") or "").strip()
+                created_at = str(item.get("createdAt") or item.get("created_at") or recorded_at)
+                updated_at = str(item.get("updatedAt") or item.get("updated_at") or created_at)
+                connection.execute(
+                    """
+                    INSERT INTO image_conversations(
+                        conversation_id, api_key_id, api_key_name, title, created_at, updated_at, payload_json, recorded_at
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        conversation_id,
+                        api_key_id,
+                        api_key_name,
+                        str(item.get("title") or "") or None,
+                        created_at,
+                        updated_at,
+                        json.dumps(item, ensure_ascii=False),
+                        recorded_at,
+                    ),
+                )
+        return normalized_items
+
+    def delete_image_conversation(self, conversation_id: str, *, api_key_id: str) -> bool:
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM image_conversations WHERE conversation_id = ? AND api_key_id = ?",
+                (conversation_id, api_key_id),
+            )
+            return cursor.rowcount > 0
+
+    def clear_image_conversations(self, *, api_key_id: str) -> None:
+        with self._lock, self._connect() as connection:
+            connection.execute("DELETE FROM image_conversations WHERE api_key_id = ?", (api_key_id,))
 
     def record_async_job(
             self,

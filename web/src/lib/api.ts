@@ -204,7 +204,7 @@ export type AsyncJobItem = {
   result_ready?: boolean;
   result_count?: number;
   preview_images?: PreviewImageItem[];
-  error?: { message?: string } | null;
+  error?: { message?: string; code?: string; status_code?: number } | null;
 };
 
 export type AsyncJobSummary = {

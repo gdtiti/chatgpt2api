@@ -15,6 +15,7 @@ from PIL import Image
 
 from services.account_service import account_service
 from services.config import config
+from services.data_service import save_image_bytes
 from services.image_options import (
     is_pixel_image_size,
     normalize_image_quality,
@@ -710,13 +711,21 @@ class OpenAIBackendAPI:
         data = response.json()
         return data.get("download_url") or data.get("url") or ""
 
-    def _save_image_bytes(self, image_data: bytes) -> str:
-        file_name = f"{int(time.time())}_{new_uuid().replace('-', '')}.png"
-        relative_dir = Path(time.strftime("%Y"), time.strftime("%m"), time.strftime("%d"))
-        file_path = config.images_dir / relative_dir / file_name
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.write_bytes(image_data)
-        return f"{config.base_url}/images/{relative_dir.as_posix()}/{file_name}"
+    def _save_image_bytes(
+            self,
+            image_data: bytes,
+            *,
+            request_id: str | None = None,
+            image_index: int = 1,
+    ) -> str:
+        saved = save_image_bytes(
+            image_data,
+            request_id=request_id or f"openai-backend-{new_uuid()}",
+            image_index=image_index,
+            base_url=config.base_url or None,
+            mime_type="image/png",
+        )
+        return saved["url"]
 
     def _resolve_image_urls(self, conversation_id: str, file_ids: list[str], sediment_ids: list[str]) -> list[str]:
         """把图片结果 id 解析成可下载 URL。"""
@@ -796,6 +805,7 @@ class OpenAIBackendAPI:
             raise ValueError("response_format must be 'url' or 'b64_json'")
         data = []
         errors: list[str] = []
+        request_id = f"openai-backend-{new_uuid()}"
         for url in urls:
             try:
                 response = self._image_request("GET", url, timeout=120)
@@ -811,7 +821,11 @@ class OpenAIBackendAPI:
             if response_format == "b64_json":
                 data.append({"b64_json": base64.b64encode(response.content).decode()})
             else:
-                data.append({"url": self._save_image_bytes(response.content)})
+                data.append({"url": self._save_image_bytes(
+                    response.content,
+                    request_id=request_id,
+                    image_index=len(data) + 1,
+                )})
         if not data and errors:
             raise RuntimeError(errors[-1])
         return {"created": int(time.time()), "data": data}
@@ -948,7 +962,11 @@ class OpenAIBackendAPI:
         if response_format == "b64_json":
             data.append({"b64_json": image_b64})
         else:
-            data.append({"url": self._save_image_bytes(base64.b64decode(image_b64))})
+            data.append({"url": self._save_image_bytes(
+                base64.b64decode(image_b64),
+                request_id=response_payload.get("id") or f"codex-image-{new_uuid()}",
+                image_index=1,
+            )})
         return {
             "created": response_payload.get("created_at") or int(time.time()),
             "data": data,

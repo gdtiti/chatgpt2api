@@ -33,6 +33,10 @@ _MIME_EXTENSIONS = {
 }
 
 
+def _image_relative_path(date_segment: str, file_name: str) -> str:
+    return f"{date_segment}/{file_name}"
+
+
 def _thumbnail_file_name(file_name: str) -> str:
     path = Path(file_name)
     return f"{path.stem}-thumb{path.suffix}"
@@ -125,15 +129,23 @@ def _guess_extension(image_data: bytes, mime_type: str | None = None) -> str:
 
 
 def build_image_url(date_segment: str, file_name: str, base_url: str | None = None) -> str:
+    relative_path = _image_relative_path(date_segment, file_name)
     template = str(config.image_url_template or "").strip()
     if template:
-        relative_path = f"{date_segment}/{file_name}"
         return (
             template
             .replace("{date}", date_segment)
             .replace("{file}", file_name)
             .replace("{path}", relative_path)
         )
+    if config.image_storage_backend == "hf_datasets":
+        hf_dataset_path = build_hf_dataset_repo_path(relative_path)
+        dataset_url = str(config.image_hf_dataset_url or "").strip().rstrip("/")
+        if dataset_url:
+            return f"{dataset_url}/{hf_dataset_path}"
+        repo_id = str(config.image_hf_dataset_repo or "").strip().strip("/")
+        if repo_id:
+            return f"https://huggingface.co/datasets/{repo_id}/resolve/main/{hf_dataset_path}"
     custom_prefix = str(config.image_url_prefix or "").strip().rstrip("/")
     if custom_prefix:
         return f"{custom_prefix}/{date_segment}/{file_name}"
@@ -144,6 +156,35 @@ def build_image_url(date_segment: str, file_name: str, base_url: str | None = No
 
 def _image_storage_dir() -> Path:
     return IMAGE_DATA_DIR
+
+
+def build_hf_dataset_repo_path(relative_path: str) -> str:
+    clean_relative_path = str(relative_path or "").strip().strip("/")
+    dataset_path = str(config.image_hf_dataset_path or "").strip().strip("/")
+    if dataset_path and clean_relative_path:
+        return f"{dataset_path}/{clean_relative_path}"
+    return dataset_path or clean_relative_path
+
+
+def _upload_hf_dataset_file(relative_path: str, payload: bytes, *, commit_message: str) -> None:
+    repo_id = str(config.image_hf_dataset_repo or "").strip()
+    token = str(config.image_hf_token or "").strip()
+    if not repo_id:
+        raise RuntimeError("hf dataset repo is required when image_storage_backend=hf_datasets")
+    if not token:
+        raise RuntimeError("hf token is required when image_storage_backend=hf_datasets")
+    try:
+        from huggingface_hub import HfApi
+    except ImportError as exc:
+        raise RuntimeError("huggingface_hub is required when image_storage_backend=hf_datasets") from exc
+    HfApi().upload_file(
+        path_or_fileobj=BytesIO(payload),
+        path_in_repo=build_hf_dataset_repo_path(relative_path),
+        repo_id=repo_id,
+        repo_type="dataset",
+        token=token,
+        commit_message=commit_message,
+    )
 
 
 def _legacy_image_storage_dir() -> Path:
@@ -292,22 +333,39 @@ def save_image_bytes(
     file_name = f"{_normalize_id(request_id)}-{max(1, int(image_index))}{extension}"
     thumbnail_file_name = _thumbnail_file_name(file_name)
     wall_file_name = _wall_thumbnail_file_name(file_name)
-    target_dir = _image_storage_dir() / date_segment
-    target_dir.mkdir(parents=True, exist_ok=True)
-    target_path = target_dir / file_name
-    thumbnail_path = target_dir / thumbnail_file_name
-    wall_path = target_dir / wall_file_name
-    target_path.write_bytes(image_data)
     try:
         thumbnail_bytes = _create_thumbnail_bytes(image_data, extension)
     except Exception:
         thumbnail_bytes = image_data
-    thumbnail_path.write_bytes(thumbnail_bytes)
     try:
         wall_bytes = _create_wall_thumbnail_bytes(image_data, extension)
     except Exception:
         wall_bytes = thumbnail_bytes
-    wall_path.write_bytes(wall_bytes)
+    if config.image_storage_backend == "hf_datasets":
+        _upload_hf_dataset_file(
+            _image_relative_path(date_segment, file_name),
+            image_data,
+            commit_message=f"upload image {request_id}",
+        )
+        _upload_hf_dataset_file(
+            _image_relative_path(date_segment, thumbnail_file_name),
+            thumbnail_bytes,
+            commit_message=f"upload image thumbnail {request_id}",
+        )
+        _upload_hf_dataset_file(
+            _image_relative_path(date_segment, wall_file_name),
+            wall_bytes,
+            commit_message=f"upload image wall {request_id}",
+        )
+    else:
+        target_dir = _image_storage_dir() / date_segment
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_path = target_dir / file_name
+        thumbnail_path = target_dir / thumbnail_file_name
+        wall_path = target_dir / wall_file_name
+        target_path.write_bytes(image_data)
+        thumbnail_path.write_bytes(thumbnail_bytes)
+        wall_path.write_bytes(wall_bytes)
     image_url = build_image_url(date_segment, file_name, base_url)
     thumbnail_url = build_image_url(date_segment, thumbnail_file_name, base_url)
     wall_url = build_image_url(date_segment, wall_file_name, base_url)

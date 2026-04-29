@@ -28,6 +28,7 @@ VERSION_FILE = BASE_DIR / "VERSION"
 DEFAULT_REFRESH_ACCOUNT_INTERVAL_MINUTE = 5
 DEFAULT_LISTEN_PORT = 80
 DEFAULT_IMAGE_FAILURE_STRATEGY = "fail"
+DEFAULT_IMAGE_STORAGE_BACKEND = "local"
 DEFAULT_IMAGE_RETRY_COUNT = 0
 DEFAULT_IMAGE_PARALLEL_ATTEMPTS = 1
 DEFAULT_IMAGE_RESPONSE_FORMAT = "b64_json"
@@ -50,6 +51,11 @@ ENV_BASE_URL = "CHATGPT2API_BASE_URL"
 ENV_PORT = "CHATGPT2API_PORT"
 ENV_PLATFORM_PORT = "PORT"
 ENV_IMAGE_FAILURE_STRATEGY = "CHATGPT2API_IMAGE_FAILURE_STRATEGY"
+ENV_IMAGE_STORAGE_BACKEND = "CHATGPT2API_IMAGE_STORAGE_BACKEND"
+ENV_IMAGE_HF_DATASET_REPO = "CHATGPT2API_IMAGE_HF_DATASET_REPO"
+ENV_IMAGE_HF_DATASET_PATH = "CHATGPT2API_IMAGE_HF_DATASET_PATH"
+ENV_IMAGE_HF_TOKEN = "CHATGPT2API_IMAGE_HF_TOKEN"
+ENV_IMAGE_HF_DATASET_URL = "CHATGPT2API_IMAGE_HF_DATASET_URL"
 ENV_IMAGE_RETRY_COUNT = "CHATGPT2API_IMAGE_RETRY_COUNT"
 ENV_IMAGE_PARALLEL_ATTEMPTS = "CHATGPT2API_IMAGE_PARALLEL_ATTEMPTS"
 ENV_IMAGE_PLACEHOLDER_PATH = "CHATGPT2API_IMAGE_PLACEHOLDER_PATH"
@@ -75,6 +81,11 @@ ENV_OVERRIDABLE_SETTINGS = {
     "proxy": ENV_PROXY,
     "base_url": ENV_BASE_URL,
     "port": ENV_PORT,
+    "image_storage_backend": ENV_IMAGE_STORAGE_BACKEND,
+    "image_hf_dataset_repo": ENV_IMAGE_HF_DATASET_REPO,
+    "image_hf_dataset_path": ENV_IMAGE_HF_DATASET_PATH,
+    "image_hf_token": ENV_IMAGE_HF_TOKEN,
+    "image_hf_dataset_url": ENV_IMAGE_HF_DATASET_URL,
     "image_failure_strategy": ENV_IMAGE_FAILURE_STRATEGY,
     "image_retry_count": ENV_IMAGE_RETRY_COUNT,
     "image_parallel_attempts": ENV_IMAGE_PARALLEL_ATTEMPTS,
@@ -368,6 +379,32 @@ class ConfigStore:
         )
 
     @property
+    def image_storage_backend(self) -> str:
+        return _resolve_choice_setting(
+            self.data,
+            "image_storage_backend",
+            ENV_IMAGE_STORAGE_BACKEND,
+            DEFAULT_IMAGE_STORAGE_BACKEND,
+            {"local", "hf_datasets"},
+        )
+
+    @property
+    def image_hf_dataset_repo(self) -> str:
+        return _resolve_text_setting(self.data, "image_hf_dataset_repo", ENV_IMAGE_HF_DATASET_REPO)
+
+    @property
+    def image_hf_dataset_path(self) -> str:
+        return _resolve_text_setting(self.data, "image_hf_dataset_path", ENV_IMAGE_HF_DATASET_PATH).strip("/")
+
+    @property
+    def image_hf_token(self) -> str:
+        return _resolve_text_setting(self.data, "image_hf_token", ENV_IMAGE_HF_TOKEN)
+
+    @property
+    def image_hf_dataset_url(self) -> str:
+        return _resolve_text_setting(self.data, "image_hf_dataset_url", ENV_IMAGE_HF_DATASET_URL).rstrip("/")
+
+    @property
     def image_retry_count(self) -> int:
         return _resolve_bounded_int_setting(
             self.data,
@@ -572,6 +609,11 @@ class ConfigStore:
                 "refresh_account_interval_minute": self.refresh_account_interval_minute,
                 "proxy": self.get_proxy_settings(),
                 "base_url": self.base_url,
+                "image_storage_backend": self.image_storage_backend,
+                "image_hf_dataset_repo": self.image_hf_dataset_repo,
+                "image_hf_dataset_path": self.image_hf_dataset_path,
+                "image_hf_token": self.image_hf_token,
+                "image_hf_dataset_url": self.image_hf_dataset_url,
                 "image_url_prefix": self.image_url_prefix,
                 "image_url_template": self.image_url_template,
                 "image_failure_strategy": self.image_failure_strategy,

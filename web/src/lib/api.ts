@@ -74,6 +74,11 @@ type AccountUpdateResponse = {
 export type SettingsConfig = {
   proxy: string;
   base_url?: string;
+  image_storage_backend?: "local" | "hf_datasets" | string;
+  image_hf_dataset_repo?: string;
+  image_hf_dataset_path?: string;
+  image_hf_token?: string;
+  image_hf_dataset_url?: string;
   image_url_prefix?: string;
   image_url_template?: string;
   "auth-key"?: string;

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
 from curl_cffi.const import CurlHttpVersion
 
+from services.config import config
 from services.openai_backend_api import ChatRequirements, OpenAIBackendAPI
 
 
@@ -162,6 +164,76 @@ class OpenAIBackendApiImageTransportTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "image_download failed"):
             api._image_response(["https://example.com/bad.png"], "b64_json")
+
+    def test_image_response_url_uses_unified_save_image_bytes(self) -> None:
+        api = OpenAIBackendAPI.__new__(OpenAIBackendAPI)
+        captured: list[dict[str, object]] = []
+
+        def fake_image_request(_method: str, url: str, **_kwargs):
+            return _FakeResponse(content=f"payload:{url}".encode())
+
+        def fake_save(image_data: bytes, *, request_id: str, image_index: int, base_url: str | None, mime_type: str | None):
+            captured.append({
+                "image_data": image_data,
+                "request_id": request_id,
+                "image_index": image_index,
+                "base_url": base_url,
+                "mime_type": mime_type,
+            })
+            return {"url": f"/saved/{image_index}.png"}
+
+        api._image_request = fake_image_request  # type: ignore[method-assign]
+
+        with mock.patch("services.openai_backend_api.save_image_bytes", side_effect=fake_save):
+            result = api._image_response(
+                ["https://example.com/one.png", "https://example.com/two.png"],
+                "url",
+            )
+
+        self.assertEqual(result["data"], [{"url": "/saved/1.png"}, {"url": "/saved/2.png"}])
+        self.assertEqual([item["image_index"] for item in captured], [1, 2])
+        self.assertEqual(captured[0]["request_id"], captured[1]["request_id"])
+        self.assertEqual(captured[0]["base_url"], config.base_url or None)
+        self.assertEqual(captured[0]["mime_type"], "image/png")
+
+    def test_codex_image_response_url_uses_unified_save_image_bytes(self) -> None:
+        api = OpenAIBackendAPI.__new__(OpenAIBackendAPI)
+        events = [
+            {
+                "type": "response.output_item.done",
+                "item": {
+                    "type": "image_generation_call",
+                    "result": "aW1hZ2UtYnl0ZXM=",
+                    "revised_prompt": "prompt",
+                    "size": "1024x1024",
+                    "output_format": "png",
+                },
+            },
+            {
+                "type": "response.completed",
+                "response": {
+                    "id": "resp_123",
+                    "created_at": 123,
+                    "model": "gpt-5.4",
+                    "status": "completed",
+                },
+            },
+        ]
+
+        with mock.patch(
+                "services.openai_backend_api.save_image_bytes",
+                return_value={"url": "/saved/codex.png"},
+        ) as mocked_save:
+            result = api._codex_image_response(events, "url")
+
+        self.assertEqual(result["data"], [{"url": "/saved/codex.png"}])
+        mocked_save.assert_called_once_with(
+            b"image-bytes",
+            request_id="resp_123",
+            image_index=1,
+            base_url=config.base_url or None,
+            mime_type="image/png",
+        )
 
 
 if __name__ == "__main__":

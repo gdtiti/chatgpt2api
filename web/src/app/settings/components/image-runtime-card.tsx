@@ -21,6 +21,11 @@ const FAILURE_STRATEGIES = [
 ] as const;
 
 const RUNTIME_SETTING_KEYS = new Set([
+  "image_storage_backend",
+  "image_hf_dataset_repo",
+  "image_hf_dataset_path",
+  "image_hf_token",
+  "image_hf_dataset_url",
   "image_failure_strategy",
   "image_retry_count",
   "image_parallel_attempts",
@@ -49,6 +54,11 @@ export function ImageRuntimeCard() {
   const isSavingConfig = useSettingsStore((state) => state.isSavingConfig);
   const loadConfig = useSettingsStore((state) => state.loadConfig);
   const saveConfig = useSettingsStore((state) => state.saveConfig);
+  const setImageStorageBackend = useSettingsStore((state) => state.setImageStorageBackend);
+  const setImageHFDatasetRepo = useSettingsStore((state) => state.setImageHFDatasetRepo);
+  const setImageHFDatasetPath = useSettingsStore((state) => state.setImageHFDatasetPath);
+  const setImageHFToken = useSettingsStore((state) => state.setImageHFToken);
+  const setImageHFDatasetUrl = useSettingsStore((state) => state.setImageHFDatasetUrl);
   const setImageFailureStrategy = useSettingsStore((state) => state.setImageFailureStrategy);
   const setImageRetryCount = useSettingsStore((state) => state.setImageRetryCount);
   const setImageParallelAttempts = useSettingsStore((state) => state.setImageParallelAttempts);
@@ -101,6 +111,7 @@ export function ImageRuntimeCard() {
   }
 
   const strategy = String(config?.image_failure_strategy || "fail");
+  const storageBackend = String(config?.image_storage_backend || "local");
   const currentStrategy = FAILURE_STRATEGIES.find((item) => item.value === strategy) || FAILURE_STRATEGIES[0];
   const isEnvLocked = (key: string) => Boolean(envOverrides[key]);
   const runtimeEnvOverrides = Object.entries(envOverrides).filter(([key]) => RUNTIME_SETTING_KEYS.has(key));
@@ -143,6 +154,75 @@ export function ImageRuntimeCard() {
         />
 
         <div className="grid gap-4 lg:grid-cols-2">
+          <div className="space-y-2">
+            <label className="text-sm text-stone-700">图片存储后端</label>
+            <Select
+              value={storageBackend}
+              onValueChange={setImageStorageBackend}
+              disabled={isEnvLocked("image_storage_backend")}
+            >
+              <SelectTrigger className="h-10 rounded-xl border-stone-200 bg-white">
+                <SelectValue placeholder="选择图片存储后端" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="local">本地 /data</SelectItem>
+                <SelectItem value="hf_datasets">Hugging Face datasets</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-stone-500">本地模式写入 `/app/data/images`；HF 模式会把原图、缩略图和瀑布墙预览上传到 datasets。</p>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm text-stone-700">HF 数据集仓库</label>
+            <Input
+              value={String(config?.image_hf_dataset_repo || "")}
+              onChange={(event) => setImageHFDatasetRepo(event.target.value)}
+              disabled={isEnvLocked("image_hf_dataset_repo")}
+              placeholder="username/dataset-name"
+              className="h-10 rounded-xl border-stone-200 bg-white"
+            />
+            <p className="text-xs text-stone-500">仅在 `hf_datasets` 模式生效，要求该 datasets 仓库已存在。</p>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm text-stone-700">HF 数据集目录前缀</label>
+            <Input
+              value={String(config?.image_hf_dataset_path || "")}
+              onChange={(event) => setImageHFDatasetPath(event.target.value)}
+              disabled={isEnvLocked("image_hf_dataset_path")}
+              placeholder="images/generated"
+              className="h-10 rounded-xl border-stone-200 bg-white"
+            />
+            <p className="text-xs text-stone-500">会与系统生成的 `YYYY-MM-DD/file` 组合成 datasets 内部路径。</p>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm text-stone-700">HF Token</label>
+            <Input
+              type="password"
+              value={String(config?.image_hf_token || "")}
+              onChange={(event) => setImageHFToken(event.target.value)}
+              disabled={isEnvLocked("image_hf_token")}
+              placeholder="hf_xxx"
+              className="h-10 rounded-xl border-stone-200 bg-white"
+            />
+            <p className="text-xs text-stone-500">需要对目标 datasets 仓库具备写权限。</p>
+          </div>
+
+          <div className="space-y-2 lg:col-span-2">
+            <label className="text-sm text-stone-700">HF 显示 URL 前缀</label>
+            <Input
+              value={String(config?.image_hf_dataset_url || "")}
+              onChange={(event) => setImageHFDatasetUrl(event.target.value)}
+              disabled={isEnvLocked("image_hf_dataset_url")}
+              placeholder="https://huggingface.co/datasets/username/dataset-name/resolve/main"
+              className="h-10 rounded-xl border-stone-200 bg-white"
+            />
+            <p className="text-xs text-stone-500">
+              返回图片 URL 时会拼接为 `显示 URL 前缀 + 数据集目录前缀 + YYYY-MM-DD/file`。留空时默认使用 Hugging Face 官方 `resolve/main` 地址。
+            </p>
+          </div>
+
           <div className="space-y-2">
             <label className="text-sm text-stone-700">失败策略</label>
             <Select

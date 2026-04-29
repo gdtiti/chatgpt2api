@@ -178,6 +178,89 @@ class DataServiceTests(unittest.TestCase):
         finally:
             data_service_module.config.data = original_config_data
 
+    def test_build_image_url_supports_hf_dataset_backend(self) -> None:
+        original_config_data = dict(data_service_module.config.data)
+        try:
+            with mock.patch.dict(
+                    "os.environ",
+                    {
+                        "CHATGPT2API_IMAGE_URL_PREFIX": "",
+                        "CHATGPT2API_IMAGE_URL_TEMPLATE": "",
+                        "CHATGPT2API_IMAGE_HF_DATASET_URL": "",
+                        "CHATGPT2API_IMAGE_HF_DATASET_REPO": "",
+                        "CHATGPT2API_IMAGE_HF_DATASET_PATH": "",
+                    },
+            ):
+                data_service_module.config.data = {
+                    **data_service_module.config.data,
+                    "image_storage_backend": "hf_datasets",
+                    "image_hf_dataset_repo": "demo-owner/demo-dataset",
+                    "image_hf_dataset_path": "images/generated",
+                    "image_hf_dataset_url": "",
+                    "image_url_prefix": "",
+                    "image_url_template": "",
+                }
+                self.assertEqual(
+                    data_service_module.build_image_url("2026-04-25", "job-1.png"),
+                    "https://huggingface.co/datasets/demo-owner/demo-dataset/resolve/main/images/generated/2026-04-25/job-1.png",
+                )
+
+                data_service_module.config.data["image_hf_dataset_url"] = "https://cdn.example.com/hf-images/"
+                self.assertEqual(
+                    data_service_module.build_image_url("2026-04-25", "job-1.png"),
+                    "https://cdn.example.com/hf-images/images/generated/2026-04-25/job-1.png",
+                )
+        finally:
+            data_service_module.config.data = original_config_data
+
+    def test_save_image_bytes_uploads_all_renditions_to_hf_dataset(self) -> None:
+        original_config_data = dict(data_service_module.config.data)
+        try:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                image = Image.new("RGB", (800, 600), color=(12, 34, 56))
+                output_path = Path(tmp_dir) / "source.png"
+                image.save(output_path, format="PNG")
+                uploads: list[tuple[str, bytes, str]] = []
+
+                def fake_upload(relative_path: str, payload: bytes, *, commit_message: str) -> None:
+                    uploads.append((relative_path, payload, commit_message))
+
+                data_service_module.config.data = {
+                    **data_service_module.config.data,
+                    "image_storage_backend": "hf_datasets",
+                    "image_hf_dataset_repo": "demo-owner/demo-dataset",
+                    "image_hf_dataset_path": "images/generated",
+                    "image_hf_dataset_url": "https://cdn.example.com/hf-images",
+                }
+
+                with mock.patch.object(data_service_module, "_upload_hf_dataset_file", side_effect=fake_upload):
+                    saved = data_service_module.save_image_bytes(
+                        output_path.read_bytes(),
+                        request_id="job-hf",
+                        image_index=2,
+                        base_url=None,
+                        mime_type="image/png",
+                    )
+
+                self.assertEqual(len(uploads), 3)
+                self.assertEqual(uploads[0][0], saved["relative_path"])
+                self.assertEqual(uploads[1][0], saved["thumbnail_relative_path"])
+                self.assertEqual(uploads[2][0], saved["wall_relative_path"])
+                self.assertEqual(
+                    saved["url"],
+                    f"https://cdn.example.com/hf-images/images/generated/{saved['relative_path']}",
+                )
+                self.assertEqual(
+                    saved["thumbnail_url"],
+                    f"https://cdn.example.com/hf-images/images/generated/{saved['thumbnail_relative_path']}",
+                )
+                self.assertEqual(
+                    saved["wall_url"],
+                    f"https://cdn.example.com/hf-images/images/generated/{saved['wall_relative_path']}",
+                )
+        finally:
+            data_service_module.config.data = original_config_data
+
 
 if __name__ == "__main__":
     unittest.main()

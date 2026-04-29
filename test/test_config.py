@@ -320,6 +320,11 @@ class ConfigLoadingTests(unittest.TestCase):
                 json.dumps(
                     {
                         "auth-key": "file-auth",
+                        "image_storage_backend": "local",
+                        "image_hf_dataset_repo": "file-owner/file-dataset",
+                        "image_hf_dataset_path": "file-images",
+                        "image_hf_token": "file-token",
+                        "image_hf_dataset_url": "https://file.example.com/datasets/file-owner/file-dataset/resolve/main",
                         "image_response_format": "b64_json",
                         "image_url_include_b64_when_requested": False,
                         "image_thumbnail_max_size": 512,
@@ -340,6 +345,11 @@ class ConfigLoadingTests(unittest.TestCase):
 
             module = self.config_module
             env_names = {
+                "CHATGPT2API_IMAGE_STORAGE_BACKEND": "hf_datasets",
+                "CHATGPT2API_IMAGE_HF_DATASET_REPO": "env-owner/env-dataset",
+                "CHATGPT2API_IMAGE_HF_DATASET_PATH": "env-images",
+                "CHATGPT2API_IMAGE_HF_TOKEN": "env-token",
+                "CHATGPT2API_IMAGE_HF_DATASET_URL": "https://env.example.com/datasets/env-owner/env-dataset/resolve/main/",
                 "CHATGPT2API_IMAGE_RESPONSE_FORMAT": "url",
                 "CHATGPT2API_IMAGE_URL_INCLUDE_B64_WHEN_REQUESTED": "true",
                 "CHATGPT2API_IMAGE_THUMBNAIL_MAX_SIZE": "320",
@@ -361,6 +371,14 @@ class ConfigLoadingTests(unittest.TestCase):
 
                 store = module.ConfigStore(config_file)
 
+                self.assertEqual(store.image_storage_backend, "hf_datasets")
+                self.assertEqual(store.image_hf_dataset_repo, "env-owner/env-dataset")
+                self.assertEqual(store.image_hf_dataset_path, "env-images")
+                self.assertEqual(store.image_hf_token, "env-token")
+                self.assertEqual(
+                    store.image_hf_dataset_url,
+                    "https://env.example.com/datasets/env-owner/env-dataset/resolve/main",
+                )
                 self.assertEqual(store.image_response_format, "url")
                 self.assertEqual(store.image_url_include_b64_when_requested, True)
                 self.assertEqual(store.image_thumbnail_max_size, 320)
@@ -405,6 +423,11 @@ class ConfigLoadingTests(unittest.TestCase):
                 store = module.ConfigStore(config_file)
                 store.update(
                     {
+                        "image_storage_backend": "hf_datasets",
+                        "image_hf_dataset_repo": "owner/dataset",
+                        "image_hf_dataset_path": "images/generated",
+                        "image_hf_token": "hf_token",
+                        "image_hf_dataset_url": "https://cdn.example.com/datasets/owner/dataset/resolve/main",
                         "image_failure_strategy": "placeholder",
                         "image_retry_count": 2,
                         "image_parallel_attempts": 3,
@@ -415,9 +438,19 @@ class ConfigLoadingTests(unittest.TestCase):
                 reloaded_store = module.ConfigStore(config_file)
                 reloaded_data = json.loads(config_file.read_text(encoding="utf-8"))
 
+                self.assertEqual(reloaded_store.image_storage_backend, "hf_datasets")
+                self.assertEqual(reloaded_store.image_hf_dataset_repo, "owner/dataset")
+                self.assertEqual(reloaded_store.image_hf_dataset_path, "images/generated")
+                self.assertEqual(reloaded_store.image_hf_token, "hf_token")
+                self.assertEqual(
+                    reloaded_store.image_hf_dataset_url,
+                    "https://cdn.example.com/datasets/owner/dataset/resolve/main",
+                )
                 self.assertEqual(reloaded_store.image_failure_strategy, "placeholder")
                 self.assertEqual(reloaded_store.image_retry_count, 2)
                 self.assertEqual(reloaded_store.image_parallel_attempts, 3)
+                self.assertEqual(reloaded_data["image_storage_backend"], "hf_datasets")
+                self.assertEqual(reloaded_data["image_hf_dataset_repo"], "owner/dataset")
                 self.assertEqual(reloaded_data["image_placeholder_path"], "data/placeholders/fallback.png")
             finally:
                 for name, value in old_env.items():

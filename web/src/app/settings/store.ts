@@ -29,6 +29,11 @@ function normalizeConfig(config: SettingsConfig): SettingsConfig {
     refresh_account_interval_minute: Number(config.refresh_account_interval_minute || 5),
     proxy: typeof config.proxy === "string" ? config.proxy : "",
     base_url: typeof config.base_url === "string" ? config.base_url : "",
+    image_storage_backend: typeof config.image_storage_backend === "string" ? config.image_storage_backend : "local",
+    image_hf_dataset_repo: typeof config.image_hf_dataset_repo === "string" ? config.image_hf_dataset_repo : "",
+    image_hf_dataset_path: typeof config.image_hf_dataset_path === "string" ? config.image_hf_dataset_path : "",
+    image_hf_token: typeof config.image_hf_token === "string" ? config.image_hf_token : "",
+    image_hf_dataset_url: typeof config.image_hf_dataset_url === "string" ? config.image_hf_dataset_url : "",
     image_url_prefix: typeof config.image_url_prefix === "string" ? config.image_url_prefix : "",
     image_url_template: typeof config.image_url_template === "string" ? config.image_url_template : "",
     image_failure_strategy:
@@ -105,6 +110,11 @@ type SettingsStore = {
   setRefreshAccountIntervalMinute: (value: string) => void;
   setProxy: (value: string) => void;
   setBaseUrl: (value: string) => void;
+  setImageStorageBackend: (value: string) => void;
+  setImageHFDatasetRepo: (value: string) => void;
+  setImageHFDatasetPath: (value: string) => void;
+  setImageHFToken: (value: string) => void;
+  setImageHFDatasetUrl: (value: string) => void;
   setImageUrlPrefix: (value: string) => void;
   setImageUrlTemplate: (value: string) => void;
   setPort: (value: string) => void;
@@ -209,6 +219,11 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         refresh_account_interval_minute: Math.max(1, Number(config.refresh_account_interval_minute) || 1),
         proxy: config.proxy.trim(),
         base_url: String(config.base_url || "").trim(),
+        image_storage_backend: String(config.image_storage_backend || "local").trim() || "local",
+        image_hf_dataset_repo: String(config.image_hf_dataset_repo || "").trim(),
+        image_hf_dataset_path: String(config.image_hf_dataset_path || "").trim().replace(/^\/+|\/+$/g, ""),
+        image_hf_token: String(config.image_hf_token || "").trim(),
+        image_hf_dataset_url: String(config.image_hf_dataset_url || "").trim(),
         image_url_prefix: String(config.image_url_prefix || "").trim(),
         image_url_template: String(config.image_url_template || "").trim(),
         image_failure_strategy: String(config.image_failure_strategy || "fail").trim() || "fail",
@@ -306,6 +321,76 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         config: {
           ...state.config,
           base_url: value,
+        },
+      };
+    });
+  },
+
+  setImageStorageBackend: (value) => {
+    set((state) => {
+      if (!state.config) {
+        return {};
+      }
+      return {
+        config: {
+          ...state.config,
+          image_storage_backend: value,
+        },
+      };
+    });
+  },
+
+  setImageHFDatasetRepo: (value) => {
+    set((state) => {
+      if (!state.config) {
+        return {};
+      }
+      return {
+        config: {
+          ...state.config,
+          image_hf_dataset_repo: value,
+        },
+      };
+    });
+  },
+
+  setImageHFDatasetPath: (value) => {
+    set((state) => {
+      if (!state.config) {
+        return {};
+      }
+      return {
+        config: {
+          ...state.config,
+          image_hf_dataset_path: value,
+        },
+      };
+    });
+  },
+
+  setImageHFToken: (value) => {
+    set((state) => {
+      if (!state.config) {
+        return {};
+      }
+      return {
+        config: {
+          ...state.config,
+          image_hf_token: value,
+        },
+      };
+    });
+  },
+
+  setImageHFDatasetUrl: (value) => {
+    set((state) => {
+      if (!state.config) {
+        return {};
+      }
+      return {
+        config: {
+          ...state.config,
+          image_hf_dataset_url: value,
         },
       };
     });

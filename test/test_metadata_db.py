@@ -110,11 +110,23 @@ class MetadataDatabaseTests(unittest.TestCase):
                 }
             ]
 
-            database.record_async_job(public_job, payload={"prompt": "海边日落"}, preview_images=preview_images)
+            result_payload = {"result": {"created": 1, "data": [{"url": preview_images[0]["url"]}]}}
+            database.record_async_job(
+                public_job,
+                payload={"prompt": "海边日落"},
+                preview_images=preview_images,
+                result=result_payload,
+            )
 
             self.assertTrue(database.has_async_jobs(is_admin=True, api_key_id="admin"))
             self.assertTrue(database.has_async_jobs(is_admin=False, api_key_id="key-1"))
             self.assertFalse(database.has_async_jobs(is_admin=False, api_key_id="missing-key"))
+
+            record = database.get_async_job_record("job-1", is_admin=False, api_key_id="key-1")
+            self.assertIsNotNone(record)
+            assert record is not None
+            self.assertEqual(record["payload"], {"prompt": "海边日落"})
+            self.assertEqual(record["result"], result_payload)
 
             jobs, jobs_total = database.list_async_jobs(is_admin=True, api_key_id="admin", query="日落")
             self.assertEqual(jobs_total, 1)

@@ -21,7 +21,9 @@ ARG TARGETARCH
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    UV_LINK_MODE=copy
+    UV_LINK_MODE=copy \
+    CHATGPT2API_DATA_DIR=/app/data \
+    CHATGPT2API_CONFIG_FILE=/app/data/config.json
 
 WORKDIR /app
 
@@ -37,6 +39,8 @@ COPY api ./api
 COPY services ./services
 COPY utils ./utils
 COPY --from=web-build /app/web/out ./web_dist
+
+VOLUME ["/app/data"]
 
 EXPOSE 80
 

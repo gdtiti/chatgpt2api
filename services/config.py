@@ -11,6 +11,13 @@ ENV_DATA_DIR = "CHATGPT2API_DATA_DIR"
 ENV_CONFIG_FILE = "CHATGPT2API_CONFIG_FILE"
 
 
+def _default_data_dir() -> Path:
+    container_data_dir = Path("/app/data")
+    if Path("/app").exists():
+        return container_data_dir
+    return BASE_DIR / "data"
+
+
 def _resolve_startup_path(env_name: str, default: Path) -> Path:
     raw_value = str(os.getenv(env_name) or "").strip()
     if not raw_value:
@@ -21,7 +28,7 @@ def _resolve_startup_path(env_name: str, default: Path) -> Path:
     return candidate
 
 
-DATA_DIR = _resolve_startup_path(ENV_DATA_DIR, BASE_DIR / "data")
+DATA_DIR = _resolve_startup_path(ENV_DATA_DIR, _default_data_dir())
 CONFIG_FILE = _resolve_startup_path(ENV_CONFIG_FILE, DATA_DIR / "config.json")
 LEGACY_CONFIG_FILE = BASE_DIR / "config.json"
 VERSION_FILE = BASE_DIR / "VERSION"

@@ -366,6 +366,7 @@ class JobService:
             payload=dict(current_job.get("payload") or job.get("payload") or {}),
             preview_images=_extract_preview_images(result_payload),
             result_path=str(result_file),
+            result=result_payload,
         )
 
     def _store_job(self, job: dict[str, object]) -> dict[str, object]:
@@ -495,6 +496,7 @@ class JobService:
             payload=dict(succeeded.get("payload") or {}),
             preview_images=_extract_preview_images(result_payload),
             result_path=str(result_file),
+            result=result_payload,
             include_task_tracking=bool(succeeded.get("include_task_tracking", True)),
             include_gallery=include_gallery,
             include_waterfall=include_waterfall,
@@ -584,6 +586,7 @@ class JobService:
                 payload=dict((job or {}).get("payload") or {}),
                 preview_images=list(public_job.get("preview_images") or []),
                 result_path=str(self._result_file(str(public_job.get("id") or ""))) if result is not None else None,
+                result=result,
             )
 
     def summarize_jobs(self, principal: AuthPrincipal) -> dict[str, int]:
@@ -691,32 +694,71 @@ class JobService:
     def clear_image_conversations(self, principal: AuthPrincipal) -> None:
         self.metadata_db.clear_image_conversations(api_key_id=principal.key_id)
 
+    def _load_metadata_record(self, job_id: str, principal: AuthPrincipal) -> dict[str, object] | None:
+        record = self.metadata_db.get_async_job_record(
+            job_id,
+            is_admin=principal.is_admin,
+            api_key_id=principal.key_id,
+        )
+        return record if isinstance(record, dict) else None
+
     def get_job(self, job_id: str, principal: AuthPrincipal) -> dict[str, object] | None:
         job = self._assert_job_access(self._load_job(job_id), principal)
-        if job is None:
+        if job is not None:
+            result = self._load_result(job_id)
+            if result is None:
+                record = self._load_metadata_record(job_id, principal)
+                result = record.get("result") if isinstance(record, dict) else None
+                result = result if isinstance(result, dict) else None
+            return self._public_job(job, result)
+        record = self._load_metadata_record(job_id, principal)
+        if record is None:
             return None
-        return self._public_job(job, self._load_result(job_id))
+        public_job = record.get("job")
+        return public_job if isinstance(public_job, dict) else None
 
     def get_job_result(self, job_id: str, principal: AuthPrincipal) -> tuple[dict[str, object] | None, dict[str, object] | None]:
         job = self._assert_job_access(self._load_job(job_id), principal)
-        if job is None:
-            return None, None
         result = self._load_result(job_id)
+        record = None
+        if job is None or result is None:
+            record = self._load_metadata_record(job_id, principal)
+        if job is None:
+            if record is None:
+                return None, None
+            public_job = record.get("job")
+            result = record.get("result")
+            return (
+                public_job if isinstance(public_job, dict) else None,
+                result if isinstance(result, dict) else None,
+            )
+        if result is None and isinstance(record, dict):
+            record_result = record.get("result")
+            result = record_result if isinstance(record_result, dict) else None
         return self._public_job(job, result), result
 
     def get_job_log(self, job_id: str, principal: AuthPrincipal) -> tuple[dict[str, object] | None, str]:
         job = self._assert_job_access(self._load_job(job_id), principal)
         if job is None:
-            return None, ""
+            record = self._load_metadata_record(job_id, principal)
+            if record is None:
+                return None, ""
+            public_job = record.get("job")
+            log_path = Path(str(record.get("log_path") or ""))
+            return public_job if isinstance(public_job, dict) else None, self._read_log_text(log_path)
         result = self._load_result(job_id)
         public_job = self._public_job(job, result)
         log_path = Path(str(job.get("log_path") or ""))
+        return public_job, self._read_log_text(log_path)
+
+    @staticmethod
+    def _read_log_text(log_path: Path) -> str:
         if not log_path.is_file():
-            return public_job, ""
+            return ""
         try:
-            return public_job, log_path.read_text(encoding="utf-8")
+            return log_path.read_text(encoding="utf-8")
         except OSError:
-            return public_job, ""
+            return ""
 
     def _execute_job(self, job: dict[str, object]) -> dict[str, object]:
         payload = dict(job.get("payload") or {})
@@ -843,6 +885,7 @@ class JobService:
                         payload=dict(succeeded.get("payload") or {}),
                         preview_images=_extract_preview_images(result_payload),
                         result_path=str(result_file),
+                        result=result_payload,
                     )
             except Exception as exc:
                 failed = self._update_job(

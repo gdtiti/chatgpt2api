@@ -188,6 +188,7 @@ class MetadataDatabase:
                             error_message TEXT,
                             log_path TEXT,
                             result_path TEXT,
+                            result_json TEXT,
                             task_visible INTEGER NOT NULL DEFAULT 1,
                             preview_images_json TEXT,
                             payload_json TEXT,
@@ -279,6 +280,7 @@ class MetadataDatabase:
                     self._ensure_column(connection, "gallery_images", "is_pinned", "INTEGER NOT NULL DEFAULT 0")
                     self._ensure_column(connection, "gallery_images", "is_blocked", "INTEGER NOT NULL DEFAULT 0")
                     self._ensure_column(connection, "async_jobs", "task_visible", "INTEGER NOT NULL DEFAULT 1")
+                    self._ensure_column(connection, "async_jobs", "result_json", "TEXT")
             finally:
                 self._initializing = previous_initializing
 
@@ -536,6 +538,7 @@ class MetadataDatabase:
             payload: dict[str, Any] | None = None,
             preview_images: list[dict[str, Any]] | None = None,
             result_path: str | None = None,
+            result: dict[str, Any] | None = None,
             include_task_tracking: bool = True,
             include_gallery: bool = True,
             include_waterfall: bool = True,
@@ -547,8 +550,8 @@ class MetadataDatabase:
                 INSERT INTO async_jobs(
                     job_id, type, status, model, created_at, updated_at, api_key_id, api_key_name,
                     prompt_preview, requested_count, size, input_image_count, result_ready, result_count,
-                    error_message, log_path, result_path, task_visible, preview_images_json, payload_json, recorded_at
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    error_message, log_path, result_path, result_json, task_visible, preview_images_json, payload_json, recorded_at
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(job_id) DO UPDATE SET
                     type=excluded.type,
                     status=excluded.status,
@@ -566,6 +569,7 @@ class MetadataDatabase:
                     error_message=excluded.error_message,
                     log_path=excluded.log_path,
                     result_path=excluded.result_path,
+                    result_json=excluded.result_json,
                     task_visible=excluded.task_visible,
                     preview_images_json=excluded.preview_images_json,
                     payload_json=excluded.payload_json,
@@ -589,6 +593,7 @@ class MetadataDatabase:
                     str(((public_job.get("error") or {}) if isinstance(public_job.get("error"), dict) else {}).get("message") or "") or None,
                     str(public_job.get("log_path") or "") or None,
                     str(result_path or "") or None,
+                    json.dumps(result, ensure_ascii=False) if result is not None else None,
                     1 if include_task_tracking else 0,
                     json.dumps(preview_images or [], ensure_ascii=False),
                     json.dumps(payload or {}, ensure_ascii=False),
@@ -697,6 +702,36 @@ class MetadataDatabase:
                     recorded_at,
                 ),
             )
+
+    def get_async_job_record(
+            self,
+            job_id: str,
+            *,
+            is_admin: bool,
+            api_key_id: str,
+    ) -> dict[str, Any] | None:
+        cleaned_job_id = str(job_id or "").strip()
+        if not cleaned_job_id:
+            return None
+        where = ["job_id = ?"]
+        params: list[Any] = [cleaned_job_id]
+        if not is_admin:
+            where.append("api_key_id = ?")
+            params.append(api_key_id)
+        where_sql = self._where_sql(where)
+        with self._lock, self._connect() as connection:
+            row = connection.execute(f"SELECT * FROM async_jobs {where_sql} LIMIT 1", params).fetchone()
+        if row is None:
+            return None
+        result_payload = self._decode_json_object(row["result_json"])
+        return {
+            "job": self._row_to_public_job(row),
+            "payload": self._decode_json_object(row["payload_json"]),
+            "result": result_payload if result_payload else None,
+            "result_path": row["result_path"],
+            "log_path": row["log_path"],
+            "task_visible": bool(row["task_visible"]),
+        }
 
     def list_async_jobs(
             self,

@@ -442,6 +442,83 @@ class AsyncJobRouteTests(unittest.TestCase):
                 job_service.shutdown(wait=False)
                 logger.set_system_log_path(old_system_log_path)
 
+    def test_job_records_survive_when_json_files_are_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            api_key_service = APIKeyService(Path(tmp_dir) / "api_keys.json", admin_key_provider=lambda: "chatgpt2api")
+            created = api_key_service.create_key(name="persistent-client")
+            principal = api_key_service.authenticate(created["plain_text"])
+            self.assertIsNotNone(principal)
+            assert principal is not None
+
+            job_service = JobService(
+                Path(tmp_dir) / "jobs",
+                Path(tmp_dir) / "job_results",
+                _DelayedChatGPTService(delay=0.0),
+                task_logs_dir=Path(tmp_dir) / "task_logs",
+                max_workers=1,
+            )
+            try:
+                public_job = {
+                    "id": "db-only-job",
+                    "type": "images.generations",
+                    "status": "succeeded",
+                    "model": "gpt-image-2",
+                    "created_at": "2026-04-25T00:00:00Z",
+                    "updated_at": "2026-04-25T00:01:00Z",
+                    "log_path": str(Path(tmp_dir) / "task_logs" / "db-only-job.log"),
+                    "api_key_id": principal.key_id,
+                    "api_key_name": principal.name,
+                    "prompt_preview": "数据库持久化图片",
+                    "requested_count": 1,
+                    "size": "1:1",
+                    "input_image_count": 0,
+                    "result_ready": True,
+                    "result_count": 1,
+                    "preview_images": [],
+                    "error": None,
+                }
+                preview_images = [{
+                    "id": "image-1",
+                    "src": "/api/view/data/2026-04-25/db-only-job-1-thumb.png",
+                    "url": "/api/view/data/2026-04-25/db-only-job-1.png",
+                    "thumbnail_url": "/api/view/data/2026-04-25/db-only-job-1-thumb.png",
+                    "wall_url": "/api/view/data/2026-04-25/db-only-job-1-wall.png",
+                    "relative_path": "2026-04-25/db-only-job-1.png",
+                    "thumbnail_relative_path": "2026-04-25/db-only-job-1-thumb.png",
+                    "wall_relative_path": "2026-04-25/db-only-job-1-wall.png",
+                }]
+                result_payload = {"result": {"created": 1, "data": [{"url": preview_images[0]["url"]}]}}
+
+                job_service.metadata_db.record_async_job(
+                    public_job,
+                    payload={"prompt": "数据库持久化图片", "size": "1:1", "n": 1},
+                    preview_images=preview_images,
+                    result=result_payload,
+                )
+
+                listed_jobs, jobs_total = job_service.list_jobs(principal)
+                self.assertEqual(jobs_total, 1)
+                self.assertEqual(listed_jobs[0]["id"], "db-only-job")
+
+                gallery_jobs, gallery_total = job_service.list_gallery_jobs(principal)
+                self.assertEqual(gallery_total, 1)
+                self.assertEqual(gallery_jobs[0]["preview_images"][0]["relative_path"], "2026-04-25/db-only-job-1.png")
+
+                wall_items, wall_total = job_service.list_waterfall_images(principal)
+                self.assertEqual(wall_total, 1)
+                self.assertEqual(wall_items[0]["wall_relative_path"], "2026-04-25/db-only-job-1-wall.png")
+
+                loaded_job = job_service.get_job("db-only-job", principal)
+                self.assertIsNotNone(loaded_job)
+                assert loaded_job is not None
+                self.assertEqual(loaded_job["prompt_preview"], "数据库持久化图片")
+
+                result_job, result = job_service.get_job_result("db-only-job", principal)
+                self.assertIsNotNone(result_job)
+                self.assertEqual(result, result_payload)
+            finally:
+                job_service.shutdown(wait=False)
+
     def test_async_job_result_and_sse_ping(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             api_key_service = APIKeyService(Path(tmp_dir) / "api_keys.json", admin_key_provider=lambda: "chatgpt2api")

@@ -1,6 +1,6 @@
 "use client";
 
-import { Ban, ChevronLeft, ChevronRight, LoaderCircle, Pin, RefreshCw, Search, Star } from "lucide-react";
+import { Ban, ChevronLeft, ChevronRight, Copy, LoaderCircle, Pin, RefreshCw, Search, Star } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -31,6 +31,20 @@ function formatTime(value?: string | null) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
+}
+
+async function copyPrompt(prompt?: string | null) {
+  const text = (prompt || "").trim();
+  if (!text) {
+    toast.error("暂无可复制的提示词");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    toast.success("提示词已复制");
+  } catch {
+    toast.error("复制提示词失败");
+  }
 }
 
 export default function WaterfallPage() {
@@ -243,7 +257,20 @@ export default function WaterfallPage() {
                           {item.is_blocked ? <Badge variant="danger">禁止</Badge> : null}
                           <Badge variant="secondary">{item.model || "auto"}</Badge>
                         </div>
-                        <p className="line-clamp-3 text-sm leading-6 text-stone-700">{item.prompt_preview || "—"}</p>
+                        <div className="flex items-start gap-2">
+                          <p className="line-clamp-3 min-w-0 flex-1 text-sm leading-6 text-stone-700">{item.prompt_preview || "—"}</p>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 shrink-0 rounded-lg text-stone-500 hover:text-stone-800"
+                            title="复制提示词"
+                            aria-label="复制提示词"
+                            onClick={() => void copyPrompt(item.prompt_preview)}
+                          >
+                            <Copy className="size-3.5" />
+                          </Button>
+                        </div>
                         <div className="text-xs text-stone-400">{formatTime(item.updated_at)}</div>
                         <div className="flex flex-wrap gap-2">
                           <Button

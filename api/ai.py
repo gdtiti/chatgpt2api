@@ -93,6 +93,135 @@ def _tracked_image_stream(
         raise
 
 
+def _tracked_chat_completion_stream(
+        *,
+        chunks: Iterator[dict[str, object]],
+        job_service: JobService,
+        job_id: str,
+        include_gallery: bool,
+        include_waterfall: bool,
+) -> Iterator[dict[str, object]]:
+    created: int | None = None
+    completion_id = ""
+    model = ""
+    role = "assistant"
+    finish_reason = "stop"
+    content_parts: list[str] = []
+    try:
+        for chunk in chunks:
+            next_chunk = dict(chunk)
+            next_chunk["job_id"] = job_id
+            completion_id = str(next_chunk.get("id") or completion_id)
+            model = str(next_chunk.get("model") or model)
+            if created is None:
+                try:
+                    created = int(next_chunk.get("created") or time.time())
+                except (TypeError, ValueError):
+                    created = int(time.time())
+            choices = next_chunk.get("choices")
+            if isinstance(choices, list):
+                for choice in choices:
+                    if not isinstance(choice, dict):
+                        continue
+                    delta = choice.get("delta")
+                    if isinstance(delta, dict):
+                        next_role = str(delta.get("role") or "").strip()
+                        if next_role:
+                            role = next_role
+                        content = delta.get("content")
+                        if isinstance(content, str) and content:
+                            content_parts.append(content)
+                    next_finish_reason = choice.get("finish_reason")
+                    if next_finish_reason:
+                        finish_reason = str(next_finish_reason)
+                    break
+            yield next_chunk
+        result = {
+            "id": completion_id or f"chatcmpl-{job_id}",
+            "object": "chat.completion",
+            "created": created or int(time.time()),
+            "model": model or "gpt-image-2",
+            "choices": [{
+                "index": 0,
+                "message": {"role": role or "assistant", "content": "".join(content_parts)},
+                "finish_reason": finish_reason or "stop",
+            }],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        }
+        job_service.finish_inline_job(
+            job_id,
+            result,
+            include_gallery=include_gallery,
+            include_waterfall=include_waterfall,
+        )
+    except Exception as exc:
+        job_service.fail_inline_job(job_id, exc)
+        raise
+
+
+def _tracked_responses_stream(
+        *,
+        events: Iterator[dict[str, object]],
+        job_service: JobService,
+        job_id: str,
+        include_gallery: bool,
+        include_waterfall: bool,
+) -> Iterator[dict[str, object]]:
+    response_id = f"resp_{job_id}"
+    created_at = int(time.time())
+    model = "gpt-image-2"
+    final_response: dict[str, object] | None = None
+    output_items: dict[int, dict[str, object]] = {}
+    try:
+        for event in events:
+            next_event = dict(event)
+            next_event["job_id"] = job_id
+            event_type = str(next_event.get("type") or "").strip()
+            response = next_event.get("response")
+            if isinstance(response, dict):
+                response_id = str(response.get("id") or response_id)
+                model = str(response.get("model") or model)
+                try:
+                    created_at = int(response.get("created_at") or created_at)
+                except (TypeError, ValueError):
+                    pass
+                if event_type == "response.completed":
+                    final_response = dict(response)
+            item = next_event.get("item")
+            if event_type == "response.output_item.done" and isinstance(item, dict):
+                try:
+                    output_index = int(next_event.get("output_index") or len(output_items))
+                except (TypeError, ValueError):
+                    output_index = len(output_items)
+                output_items[output_index] = dict(item)
+            yield next_event
+        ordered_output = [output_items[index] for index in sorted(output_items)]
+        if final_response is None:
+            final_response = {
+                "id": response_id,
+                "object": "response",
+                "created_at": created_at,
+                "status": "completed",
+                "error": None,
+                "incomplete_details": None,
+                "model": model,
+                "output": ordered_output,
+                "parallel_tool_calls": False,
+            }
+        elif ordered_output and not final_response.get("output"):
+            final_response = dict(final_response)
+            final_response["output"] = ordered_output
+        job_service.finish_inline_job(
+            job_id,
+            final_response,
+            include_gallery=include_gallery,
+            include_waterfall=include_waterfall,
+        )
+    except Exception as exc:
+        job_service.fail_inline_job(job_id, exc)
+        raise
+
+
 def _openai_compat_image_tracking_options() -> dict[str, bool]:
     include_task_tracking = config.openai_compat_image_task_tracking_enabled
     include_gallery = config.openai_compat_image_gallery_enabled
@@ -373,6 +502,26 @@ def create_router(chatgpt_service: ChatGPTService, job_service: JobService | Non
                     await run_in_threadpool(account_service.get_available_access_token)
                 except RuntimeError as exc:
                     raise_image_quota_error(exc)
+                tracking_options = _openai_compat_image_tracking_options()
+                chunks = chatgpt_service.stream_chat_completion(payload)
+                if job_service is not None and tracking_options["enabled"]:
+                    tracked_job = job_service.start_inline_job(
+                        "chat.completions",
+                        payload,
+                        principal,
+                        include_task_tracking=tracking_options["include_task_tracking"],
+                    )
+                    chunks = _tracked_chat_completion_stream(
+                        chunks=chunks,
+                        job_service=job_service,
+                        job_id=str(tracked_job.get("id") or ""),
+                        include_gallery=tracking_options["include_gallery"],
+                        include_waterfall=tracking_options["include_waterfall"],
+                    )
+                return StreamingResponse(
+                    sse_json_stream(chunks),
+                    media_type="text/event-stream",
+                )
             return StreamingResponse(
                 sse_json_stream(chatgpt_service.stream_chat_completion(payload)),
                 media_type="text/event-stream",
@@ -395,6 +544,27 @@ def create_router(chatgpt_service: ChatGPTService, job_service: JobService | Non
         default_model = "gpt-image-2" if is_image_request else "auto"
         ensure_model_access(principal, payload.get("model") or default_model)
         if bool(payload.get("stream")):
+            if is_image_request:
+                tracking_options = _openai_compat_image_tracking_options()
+                events = chatgpt_service.stream_response(payload)
+                if job_service is not None and tracking_options["enabled"]:
+                    tracked_job = job_service.start_inline_job(
+                        "responses",
+                        payload,
+                        principal,
+                        include_task_tracking=tracking_options["include_task_tracking"],
+                    )
+                    events = _tracked_responses_stream(
+                        events=events,
+                        job_service=job_service,
+                        job_id=str(tracked_job.get("id") or ""),
+                        include_gallery=tracking_options["include_gallery"],
+                        include_waterfall=tracking_options["include_waterfall"],
+                    )
+                return StreamingResponse(
+                    responses_sse_stream(events),
+                    media_type="text/event-stream",
+                )
             return StreamingResponse(
                 responses_sse_stream(chatgpt_service.stream_response(payload)),
                 media_type="text/event-stream",

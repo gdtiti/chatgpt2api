@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Images, LoaderCircle, RefreshCw, Search } from "lucide-react";
+import { ChevronLeft, ChevronRight, Copy, Images, LoaderCircle, RefreshCw, Search } from "lucide-react";
 import { toast } from "sonner";
 
 import { ImageLightbox } from "@/components/image-lightbox";
@@ -31,6 +31,20 @@ function galleryItemsFromJob(job: AsyncJobItem): PreviewImageItem[] {
     return [];
   }
   return job.preview_images.filter((item) => typeof item?.src === "string" && item.src.trim().length > 0);
+}
+
+async function copyPrompt(prompt?: string | null) {
+  const text = (prompt || "").trim();
+  if (!text) {
+    toast.error("暂无可复制的提示词");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    toast.success("提示词已复制");
+  } catch {
+    toast.error("复制提示词失败");
+  }
 }
 
 export default function GalleryPage() {
@@ -193,7 +207,20 @@ export default function GalleryPage() {
                     <div key={job.id} className="grid gap-4 rounded-2xl border border-stone-200 bg-stone-50/70 p-4 lg:grid-cols-[280px_minmax(0,1fr)]">
                       <div className="space-y-2">
                         <div className="text-[11px] uppercase tracking-[0.18em] text-stone-400">{job.type}</div>
-                        <div className="text-sm font-medium leading-6 text-stone-800">{job.prompt_preview || "—"}</div>
+                        <div className="flex items-start gap-2">
+                          <div className="min-w-0 flex-1 text-sm font-medium leading-6 text-stone-800">{job.prompt_preview || "—"}</div>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 shrink-0 rounded-lg text-stone-500 hover:text-stone-800"
+                            title="复制提示词"
+                            aria-label="复制提示词"
+                            onClick={() => void copyPrompt(job.prompt_preview)}
+                          >
+                            <Copy className="size-3.5" />
+                          </Button>
+                        </div>
                         <div className="text-xs text-stone-500">
                           {job.model || "auto"} · {formatTime(job.updated_at)} · {job.result_count || images.length} 张
                         </div>

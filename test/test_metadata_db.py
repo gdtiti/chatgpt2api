@@ -120,19 +120,19 @@ class MetadataDatabaseTests(unittest.TestCase):
 
             self.assertTrue(database.has_async_jobs(is_admin=True, api_key_id="admin"))
             self.assertTrue(database.has_async_jobs(is_admin=False, api_key_id="key-1"))
-            self.assertFalse(database.has_async_jobs(is_admin=False, api_key_id="missing-key"))
+            self.assertTrue(database.has_async_jobs(is_admin=False, api_key_id="missing-key"))
 
-            record = database.get_async_job_record("job-1", is_admin=False, api_key_id="key-1")
+            record = database.get_async_job_record("job-1", is_admin=False, api_key_id="missing-key")
             self.assertIsNotNone(record)
             assert record is not None
             self.assertEqual(record["payload"], {"prompt": "海边日落"})
             self.assertEqual(record["result"], result_payload)
 
-            jobs, jobs_total = database.list_async_jobs(is_admin=True, api_key_id="admin", query="日落")
+            jobs, jobs_total = database.list_async_jobs(is_admin=False, api_key_id="missing-key", query="日落")
             self.assertEqual(jobs_total, 1)
             self.assertEqual(jobs[0]["preview_images"][0]["wall_url"], preview_images[0]["wall_url"])
 
-            gallery_jobs, gallery_total = database.list_gallery_jobs(is_admin=True, api_key_id="admin", query="日落")
+            gallery_jobs, gallery_total = database.list_gallery_jobs(is_admin=False, api_key_id="missing-key", query="日落")
             self.assertEqual(gallery_total, 1)
             self.assertEqual(gallery_jobs[0]["preview_images"][0]["relative_path"], "2026-04-25/job-1-1.png")
 
@@ -150,13 +150,13 @@ class MetadataDatabaseTests(unittest.TestCase):
             self.assertTrue(updated["is_pinned"])
             self.assertTrue(updated["is_blocked"])
 
-            visible_items, visible_total = database.list_waterfall_images(is_admin=True, api_key_id="admin")
+            visible_items, visible_total = database.list_waterfall_images(is_admin=False, api_key_id="missing-key")
             self.assertEqual(visible_total, 0)
             self.assertEqual(visible_items, [])
 
             all_items, all_total = database.list_waterfall_images(
-                is_admin=True,
-                api_key_id="admin",
+                is_admin=False,
+                api_key_id="missing-key",
                 include_blocked=True,
             )
             self.assertEqual(all_total, 1)
@@ -204,9 +204,25 @@ class MetadataDatabaseTests(unittest.TestCase):
             self.assertEqual(jobs_total, 0)
             self.assertEqual(jobs, [])
 
+            hidden_jobs, hidden_jobs_total = database.list_async_jobs(
+                is_admin=True,
+                api_key_id="admin",
+                include_hidden=True,
+            )
+            self.assertEqual(hidden_jobs_total, 1)
+            self.assertEqual(hidden_jobs[0]["id"], "job-hidden-task")
+
             gallery_jobs, gallery_total = database.list_gallery_jobs(is_admin=True, api_key_id="admin")
             self.assertEqual(gallery_total, 0)
             self.assertEqual(gallery_jobs, [])
+
+            hidden_gallery_jobs, hidden_gallery_total = database.list_gallery_jobs(
+                is_admin=True,
+                api_key_id="admin",
+                include_hidden=True,
+            )
+            self.assertEqual(hidden_gallery_total, 1)
+            self.assertEqual(hidden_gallery_jobs[0]["id"], "job-hidden-task")
 
             wall_items, wall_total = database.list_waterfall_images(is_admin=True, api_key_id="admin")
             self.assertEqual(wall_total, 1)

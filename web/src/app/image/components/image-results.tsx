@@ -1,6 +1,7 @@
 "use client";
 
-import { Clock3, LoaderCircle, Sparkles } from "lucide-react";
+import { Clock3, Copy, LoaderCircle, Sparkles } from "lucide-react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import type { ImageConversation, ImageTurnStatus, StoredImage, StoredReferenceImage } from "@/store/image-conversations";
@@ -36,6 +37,20 @@ function getStoredImageFullSrc(image: StoredImage) {
     return image.url.trim();
   }
   return getStoredImageSrc(image);
+}
+
+async function copyPrompt(prompt?: string | null) {
+  const text = String(prompt || "").trim();
+  if (!text) {
+    toast.error("暂无可复制的提示词");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    toast.success("提示词已复制");
+  } catch {
+    toast.error("复制提示词失败");
+  }
 }
 
 export function ImageResults({
@@ -94,7 +109,20 @@ export function ImageResults({
                   <span>{getTurnStatusLabel(turn.status)}</span>
                   <span>{formatConversationTime(turn.createdAt)}</span>
                 </div>
-                <div className="text-right">{turn.prompt}</div>
+                <div className="flex items-start justify-end gap-2">
+                  <div className="min-w-0 text-right">{turn.prompt}</div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="mt-0.5 h-7 w-7 shrink-0 rounded-lg text-stone-500 hover:text-stone-800"
+                    title="复制完整提示词"
+                    aria-label="复制完整提示词"
+                    onClick={() => void copyPrompt(turn.prompt)}
+                  >
+                    <Copy className="size-3.5" />
+                  </Button>
+                </div>
               </div>
             </div>
 

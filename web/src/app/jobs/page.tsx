@@ -105,7 +105,21 @@ function formatError(job: AsyncJobItem) {
 }
 
 function formatPrompt(job: AsyncJobItem) {
-  return String(job.prompt_preview || "").trim() || "—";
+  return String(job.prompt || job.prompt_preview || "").trim() || "—";
+}
+
+async function copyPromptText(job: AsyncJobItem) {
+  const text = String(job.prompt || job.prompt_preview || "").trim();
+  if (!text) {
+    toast.error("暂无可复制的提示词");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    toast.success("提示词已复制");
+  } catch {
+    toast.error("复制提示词失败");
+  }
 }
 
 function formatAutoRefreshBadge(intervalMs: number) {
@@ -225,7 +239,7 @@ export default function JobsPage() {
   const [total, setTotal] = useState(0);
   const [queryInput, setQueryInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
-  const [sortOption, setSortOption] = useState("updated_at:desc");
+  const [sortOption, setSortOption] = useState("created_at:desc");
   const [autoRefreshInterval, setAutoRefreshInterval] = useState(String(JOBS_ACTIVE_POLL_INTERVAL_MS));
   const [isLoading, setIsLoading] = useState(true);
   const [detailOpen, setDetailOpen] = useState(false);
@@ -264,6 +278,7 @@ export default function JobsPage() {
         query: searchQuery,
         sort,
         order,
+        include_hidden: true,
       });
       if (!isMountedRef.current || requestSeq !== jobsRequestSeqRef.current) {
         return;
@@ -482,8 +497,9 @@ export default function JobsPage() {
                     <SelectValue placeholder="排序" />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="created_at:desc">最新生成</SelectItem>
+                    <SelectItem value="created_at:asc">最早生成</SelectItem>
                     <SelectItem value="updated_at:desc">最新更新</SelectItem>
-                    <SelectItem value="created_at:desc">最新创建</SelectItem>
                     <SelectItem value="updated_at:asc">最早更新</SelectItem>
                     <SelectItem value="status:asc">状态排序</SelectItem>
                     <SelectItem value="type:asc">类型排序</SelectItem>
@@ -620,7 +636,18 @@ export default function JobsPage() {
                         <td className="px-4 py-4 text-stone-700">{job.model || "—"}</td>
                         <td className="px-4 py-4">
                           <div className="max-w-[260px] space-y-1">
-                            <div className="line-clamp-2 text-sm text-stone-700">{formatPrompt(job)}</div>
+                            <div className="flex items-start gap-2">
+                              <div className="line-clamp-2 min-w-0 flex-1 text-sm text-stone-700">{formatPrompt(job)}</div>
+                              <button
+                                type="button"
+                                className="shrink-0 rounded-lg p-1 text-stone-400 transition hover:bg-stone-100 hover:text-stone-700"
+                                title="复制完整提示词"
+                                aria-label="复制完整提示词"
+                                onClick={() => void copyPromptText(job)}
+                              >
+                                <Copy className="size-3.5" />
+                              </button>
+                            </div>
                             {Array.isArray(job.preview_images) && job.preview_images.length > 0 ? (
                               <div className="flex flex-wrap gap-2 pt-1">
                                 {job.preview_images.slice(0, 3).map((item, index) => {
@@ -765,7 +792,18 @@ export default function JobsPage() {
                   </div>
                 </div>
                 <div className="mt-4 space-y-2">
-                  <div className="text-xs text-stone-400">请求摘要</div>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-xs text-stone-400">请求摘要</div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-8 rounded-xl border-stone-200 bg-white px-2 text-xs text-stone-700"
+                      onClick={() => void copyPromptText(detailJob)}
+                    >
+                      <Copy className="size-3.5" />
+                      复制完整提示词
+                    </Button>
+                  </div>
                   <div className="rounded-xl bg-stone-50 px-3 py-3 text-sm leading-6 text-stone-700">
                     {formatPrompt(detailJob)}
                   </div>

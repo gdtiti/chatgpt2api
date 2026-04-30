@@ -90,8 +90,9 @@ def create_router(job_service: JobService) -> APIRouter:
             status: str | None = Query(default=None),
             job_type: str | None = Query(default=None, alias="type"),
             query: str | None = Query(default=None),
-            sort: str | None = Query(default="updated_at"),
+            sort: str | None = Query(default="created_at"),
             order: str | None = Query(default="desc"),
+            include_hidden: bool = Query(default=False),
     ):
         principal = require_client_principal(authorization)
         items, total = job_service.list_jobs(
@@ -103,13 +104,14 @@ def create_router(job_service: JobService) -> APIRouter:
             query=query,
             sort=sort,
             order=order,
+            include_hidden=include_hidden,
         )
         return {
             "items": items,
             "total": total,
             "limit": limit,
             "offset": offset,
-            "summary": job_service.summarize_jobs(principal),
+            "summary": job_service.summarize_jobs(principal, include_hidden=include_hidden),
         }
 
     @router.get("/api/gallery")
@@ -118,8 +120,9 @@ def create_router(job_service: JobService) -> APIRouter:
             limit: int = Query(default=20, ge=1, le=100),
             offset: int = Query(default=0, ge=0),
             query: str | None = Query(default=None),
-            sort: str | None = Query(default="updated_at"),
+            sort: str | None = Query(default="created_at"),
             order: str | None = Query(default="desc"),
+            include_hidden: bool = Query(default=False),
     ):
         principal = require_client_principal(authorization)
         items, total = job_service.list_gallery_jobs(
@@ -129,6 +132,7 @@ def create_router(job_service: JobService) -> APIRouter:
             query=query,
             sort=sort,
             order=order,
+            include_hidden=include_hidden,
         )
         return {
             "items": items,
@@ -144,6 +148,9 @@ def create_router(job_service: JobService) -> APIRouter:
             offset: int = Query(default=0, ge=0),
             query: str | None = Query(default=None),
             include_blocked: bool = Query(default=False),
+            sort: str | None = Query(default="created_at"),
+            order: str | None = Query(default="desc"),
+            include_hidden: bool = Query(default=False),
     ):
         principal = require_client_principal(authorization)
         items, total = job_service.list_waterfall_images(
@@ -152,6 +159,9 @@ def create_router(job_service: JobService) -> APIRouter:
             offset=offset,
             query=query,
             include_blocked=include_blocked,
+            sort=sort,
+            order=order,
+            include_hidden=include_hidden,
         )
         return {
             "items": items,

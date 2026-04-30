@@ -794,7 +794,7 @@ class AsyncJobRouteTests(unittest.TestCase):
                 job_service.shutdown(wait=False)
                 logger.set_system_log_path(old_system_log_path)
 
-    def test_image_conversations_are_persisted_per_api_key(self) -> None:
+    def test_image_conversations_are_global_history(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             api_key_service = APIKeyService(Path(tmp_dir) / "api_keys.json", admin_key_provider=lambda: "chatgpt2api")
             first_key = api_key_service.create_key(name="first-client")["plain_text"]
@@ -854,11 +854,11 @@ class AsyncJobRouteTests(unittest.TestCase):
                     headers={"Authorization": f"Bearer {second_key}"},
                 )
                 self.assertEqual(second_response.status_code, 200)
-                self.assertEqual(second_response.json()["items"], [])
+                self.assertEqual(second_response.json()["items"], [conversation])
 
                 delete_response = client.delete(
                     "/api/image/conversations/conversation-1",
-                    headers={"Authorization": f"Bearer {first_key}"},
+                    headers={"Authorization": f"Bearer {second_key}"},
                 )
                 self.assertEqual(delete_response.status_code, 200)
                 self.assertTrue(delete_response.json()["deleted"])

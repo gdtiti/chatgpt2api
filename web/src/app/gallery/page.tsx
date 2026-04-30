@@ -8,6 +8,7 @@ import { ImageLightbox } from "@/components/image-lightbox";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { fetchGalleryJobs, type AsyncJobItem, type PreviewImageItem } from "@/lib/api";
 
 function formatTime(value?: string | null) {
@@ -56,6 +57,7 @@ export default function GalleryPage() {
   const [total, setTotal] = useState(0);
   const [queryInput, setQueryInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [sortOption, setSortOption] = useState("created_at:desc");
   const [lightboxItems, setLightboxItems] = useState<Array<{ id: string; src: string }>>([]);
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const [lightboxOpen, setLightboxOpen] = useState(false);
@@ -66,6 +68,7 @@ export default function GalleryPage() {
     [jobs],
   );
   const pageCount = Math.max(1, Math.ceil(total / limit));
+  const [sort, order] = sortOption.split(":");
 
   const loadJobs = async (silent = false) => {
     if (!silent) {
@@ -76,8 +79,9 @@ export default function GalleryPage() {
         limit,
         offset: (page - 1) * limit,
         query: searchQuery,
-        sort: "updated_at",
-        order: "desc",
+        sort,
+        order,
+        include_hidden: true,
       });
       setJobs(response.items);
       setTotal(response.total);
@@ -103,11 +107,11 @@ export default function GalleryPage() {
       return;
     }
     void loadJobs();
-  }, [page, searchQuery]);
+  }, [page, searchQuery, sortOption]);
 
   useEffect(() => {
     setPage(1);
-  }, [searchQuery]);
+  }, [searchQuery, sortOption]);
 
   return (
     <>
@@ -154,6 +158,19 @@ export default function GalleryPage() {
                   <Search className="size-4" />
                   搜索
                 </Button>
+                <Select value={sortOption} onValueChange={setSortOption}>
+                  <SelectTrigger className="h-10 w-[150px] rounded-xl border-stone-200 bg-white">
+                    <SelectValue placeholder="排序" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="created_at:desc">最新生成</SelectItem>
+                    <SelectItem value="created_at:asc">最早生成</SelectItem>
+                    <SelectItem value="updated_at:desc">最新更新</SelectItem>
+                    <SelectItem value="updated_at:asc">最早更新</SelectItem>
+                    <SelectItem value="model:asc">模型排序</SelectItem>
+                    <SelectItem value="type:asc">类型排序</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
               <div className="flex items-center gap-2 text-sm text-stone-500">
                 <span>
@@ -214,9 +231,9 @@ export default function GalleryPage() {
                             variant="ghost"
                             size="icon"
                             className="h-7 w-7 shrink-0 rounded-lg text-stone-500 hover:text-stone-800"
-                            title="复制提示词"
-                            aria-label="复制提示词"
-                            onClick={() => void copyPrompt(job.prompt_preview)}
+                            title="复制完整提示词"
+                            aria-label="复制完整提示词"
+                            onClick={() => void copyPrompt(job.prompt || job.prompt_preview)}
                           >
                             <Copy className="size-3.5" />
                           </Button>

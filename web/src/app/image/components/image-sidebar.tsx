@@ -1,6 +1,7 @@
 "use client";
 
-import { LoaderCircle, MessageSquarePlus, Trash2 } from "lucide-react";
+import { Copy, LoaderCircle, MessageSquarePlus, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -16,6 +17,24 @@ type ImageSidebarProps = {
   onDeleteConversation: (id: string) => void | Promise<void>;
   formatConversationTime: (value: string) => string;
 };
+
+function getConversationPrompt(conversation: ImageConversation) {
+  return String(conversation.turns[0]?.prompt || conversation.title || "").trim();
+}
+
+async function copyPrompt(prompt?: string | null) {
+  const text = String(prompt || "").trim();
+  if (!text) {
+    toast.error("暂无可复制的提示词");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    toast.success("提示词已复制");
+  } catch {
+    toast.error("复制提示词失败");
+  }
+}
 
 export function ImageSidebar({
   conversations,
@@ -88,6 +107,15 @@ export function ImageSidebar({
                         ) : null}
                       </div>
                     ) : null}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void copyPrompt(getConversationPrompt(conversation))}
+                    className="absolute top-3 right-10 inline-flex size-7 items-center justify-center rounded-md text-stone-400 opacity-0 transition hover:bg-stone-100 hover:text-stone-700 group-hover:opacity-100"
+                    aria-label="复制完整提示词"
+                    title="复制完整提示词"
+                  >
+                    <Copy className="size-4" />
                   </button>
                   <button
                     type="button"

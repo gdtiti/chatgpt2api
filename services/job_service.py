@@ -65,12 +65,19 @@ def _extract_text_from_message_content(content: object) -> str:
 
 
 def _build_prompt_preview(payload: dict[str, object]) -> str | None:
-    prompt = _clean_text(payload.get("prompt"))
+    prompt = _build_prompt_text(payload)
     if prompt:
         return _truncate_text(prompt)
+    return None
+
+
+def _build_prompt_text(payload: dict[str, object]) -> str | None:
+    prompt = _clean_text(payload.get("prompt"))
+    if prompt:
+        return " ".join(prompt.split())
     input_value = payload.get("input")
     if isinstance(input_value, str) and input_value.strip():
-        return _truncate_text(input_value)
+        return " ".join(input_value.split())
     messages = payload.get("messages")
     if not isinstance(messages, list):
         return None
@@ -79,7 +86,7 @@ def _build_prompt_preview(payload: dict[str, object]) -> str | None:
             continue
         content = _extract_text_from_message_content(item.get("content"))
         if content:
-            return _truncate_text(content)
+            return " ".join(content.split())
     return None
 
 
@@ -311,6 +318,7 @@ class JobService:
             "log_path": job.get("log_path"),
             "api_key_id": job.get("api_key_id"),
             "api_key_name": job.get("api_key_name"),
+            "prompt": _build_prompt_text(payload),
             "prompt_preview": _build_prompt_preview(payload),
             "requested_count": _coerce_positive_int(payload.get("n"), 1),
             "size": _clean_text(payload.get("size")) or None,
@@ -386,9 +394,10 @@ class JobService:
     def _assert_job_access(self, job: dict[str, object] | None, principal: AuthPrincipal) -> dict[str, object] | None:
         if job is None:
             return None
-        if principal.is_admin:
-            return job
-        return job if str(job.get("api_key_id") or "") == principal.key_id else None
+        # History is instance-scoped rather than API-key-scoped: gallery, wall,
+        # job details and drawing records must remain visible after the key or
+        # account that created them has been removed.
+        return job
 
     def submit_job(self, job_type: str, payload: dict[str, object], principal: AuthPrincipal) -> dict[str, object]:
         now = _utc_now()
@@ -529,6 +538,7 @@ class JobService:
             query: str | None = None,
             sort: str | None = None,
             order: str | None = None,
+            include_hidden: bool = False,
     ) -> tuple[list[dict[str, object]], int]:
         self._backfill_metadata_if_empty(principal)
         items, total = self.metadata_db.list_async_jobs(
@@ -541,6 +551,7 @@ class JobService:
             query=query,
             sort=sort,
             order=order,
+            include_hidden=include_hidden,
         )
         ensured_items = [self._ensure_public_job_previews(item) for item in items]
         return ensured_items, total
@@ -589,9 +600,13 @@ class JobService:
                 result=result,
             )
 
-    def summarize_jobs(self, principal: AuthPrincipal) -> dict[str, int]:
+    def summarize_jobs(self, principal: AuthPrincipal, *, include_hidden: bool = False) -> dict[str, int]:
         self._backfill_metadata_if_empty(principal)
-        return self.metadata_db.summarize_async_jobs(is_admin=principal.is_admin, api_key_id=principal.key_id)
+        return self.metadata_db.summarize_async_jobs(
+            is_admin=principal.is_admin,
+            api_key_id=principal.key_id,
+            include_hidden=include_hidden,
+        )
 
     def list_gallery_jobs(
             self,
@@ -602,6 +617,7 @@ class JobService:
             query: str | None = None,
             sort: str | None = None,
             order: str | None = None,
+            include_hidden: bool = False,
     ) -> tuple[list[dict[str, object]], int]:
         self._backfill_metadata_if_empty(principal)
         items, total = self.metadata_db.list_gallery_jobs(
@@ -612,6 +628,7 @@ class JobService:
             query=query,
             sort=sort,
             order=order,
+            include_hidden=include_hidden,
         )
         ensured_items = [self._ensure_public_job_previews(item) for item in items]
         return ensured_items, total
@@ -628,6 +645,9 @@ class JobService:
             offset: int = 0,
             query: str | None = None,
             include_blocked: bool = False,
+            sort: str | None = None,
+            order: str | None = None,
+            include_hidden: bool = False,
     ) -> tuple[list[dict[str, object]], int]:
         self._backfill_metadata_if_empty(principal)
         items, total = self.metadata_db.list_waterfall_images(
@@ -637,6 +657,9 @@ class JobService:
             offset=offset,
             query=query,
             include_blocked=include_blocked,
+            sort=sort,
+            order=order,
+            include_hidden=include_hidden,
         )
         ensured_items: list[dict[str, object]] = []
         for item in items:

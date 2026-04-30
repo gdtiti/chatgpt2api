@@ -322,8 +322,48 @@ class MetadataDatabase:
         return candidate if candidate in allowed else default
 
     @staticmethod
+    def _clean_prompt_text(value: object) -> str:
+        return " ".join(str(value or "").split()).strip()
+
+    @staticmethod
+    def _extract_text_from_message_content(content: object) -> str:
+        if isinstance(content, str):
+            return MetadataDatabase._clean_prompt_text(content)
+        if not isinstance(content, list):
+            return ""
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict) and str(item.get("type") or "") == "text":
+                text = MetadataDatabase._clean_prompt_text(item.get("text"))
+                if text:
+                    parts.append(text)
+        return " ".join(parts)
+
+    @staticmethod
+    def _extract_prompt_text(payload: dict[str, Any]) -> str | None:
+        prompt = MetadataDatabase._clean_prompt_text(payload.get("prompt"))
+        if prompt:
+            return prompt
+        input_value = payload.get("input")
+        if isinstance(input_value, str):
+            input_text = MetadataDatabase._clean_prompt_text(input_value)
+            if input_text:
+                return input_text
+        messages = payload.get("messages")
+        if not isinstance(messages, list):
+            return None
+        for item in reversed(messages):
+            if not isinstance(item, dict) or str(item.get("role") or "") != "user":
+                continue
+            content = MetadataDatabase._extract_text_from_message_content(item.get("content"))
+            if content:
+                return content
+        return None
+
+    @staticmethod
     def _row_to_public_job(row: sqlite3.Row) -> dict[str, Any]:
         preview_images = MetadataDatabase._decode_json_list(row["preview_images_json"])
+        payload = MetadataDatabase._decode_json_object(row["payload_json"])
         error_message = str(row["error_message"] or "").strip()
         return {
             "id": row["job_id"],
@@ -335,6 +375,7 @@ class MetadataDatabase:
             "log_path": row["log_path"],
             "api_key_id": row["api_key_id"],
             "api_key_name": row["api_key_name"],
+            "prompt": MetadataDatabase._extract_prompt_text(payload),
             "prompt_preview": row["prompt_preview"],
             "requested_count": int(row["requested_count"] or 0),
             "size": row["size"],
@@ -356,9 +397,6 @@ class MetadataDatabase:
             job_type: str | None = None,
             query: str | None = None,
     ) -> None:
-        if not is_admin:
-            where.append("api_key_id = ?")
-            params.append(api_key_id)
         if status:
             where.append("status = ?")
             params.append(status)
@@ -426,18 +464,22 @@ class MetadataDatabase:
         with self._lock, self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT payload_json
+                SELECT conversation_id, payload_json
                 FROM image_conversations
-                WHERE api_key_id = ?
                 ORDER BY updated_at DESC, conversation_id DESC
                 """,
-                (api_key_id,),
             ).fetchall()
-        return [
-            conversation
-            for row in rows
-            if (conversation := self._decode_json_object(row["payload_json"]))
-        ]
+        items: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for row in rows:
+            conversation_id = str(row["conversation_id"] or "").strip()
+            if not conversation_id or conversation_id in seen:
+                continue
+            seen.add(conversation_id)
+            conversation = self._decode_json_object(row["payload_json"])
+            if conversation:
+                items.append(conversation)
+        return items
 
     def upsert_image_conversation(
             self,
@@ -495,7 +537,7 @@ class MetadataDatabase:
             if isinstance(item, dict) and str(item.get("id") or "").strip()
         ]
         with self._lock, self._connect() as connection:
-            connection.execute("DELETE FROM image_conversations WHERE api_key_id = ?", (api_key_id,))
+            connection.execute("DELETE FROM image_conversations")
             for item in normalized_items:
                 conversation_id = str(item.get("id") or "").strip()
                 created_at = str(item.get("createdAt") or item.get("created_at") or recorded_at)
@@ -522,14 +564,14 @@ class MetadataDatabase:
     def delete_image_conversation(self, conversation_id: str, *, api_key_id: str) -> bool:
         with self._lock, self._connect() as connection:
             cursor = connection.execute(
-                "DELETE FROM image_conversations WHERE conversation_id = ? AND api_key_id = ?",
-                (conversation_id, api_key_id),
+                "DELETE FROM image_conversations WHERE conversation_id = ?",
+                (conversation_id,),
             )
             return cursor.rowcount > 0
 
     def clear_image_conversations(self, *, api_key_id: str) -> None:
         with self._lock, self._connect() as connection:
-            connection.execute("DELETE FROM image_conversations WHERE api_key_id = ?", (api_key_id,))
+            connection.execute("DELETE FROM image_conversations")
 
     def record_async_job(
             self,
@@ -715,9 +757,6 @@ class MetadataDatabase:
             return None
         where = ["job_id = ?"]
         params: list[Any] = [cleaned_job_id]
-        if not is_admin:
-            where.append("api_key_id = ?")
-            params.append(api_key_id)
         where_sql = self._where_sql(where)
         with self._lock, self._connect() as connection:
             row = connection.execute(f"SELECT * FROM async_jobs {where_sql} LIMIT 1", params).fetchone()
@@ -745,14 +784,16 @@ class MetadataDatabase:
             query: str | None = None,
             sort: str | None = None,
             order: str | None = None,
+            include_hidden: bool = False,
     ) -> tuple[list[dict[str, Any]], int]:
         limit_value = max(1, min(int(limit or 50), 200))
         offset_value = max(0, int(offset or 0))
-        sort_column = self._safe_sort(sort, {"created_at", "updated_at", "status", "type", "model"}, "updated_at")
+        sort_column = self._safe_sort(sort, {"created_at", "updated_at", "status", "type", "model"}, "created_at")
         direction = "ASC" if str(order or "").lower() == "asc" else "DESC"
         where: list[str] = []
         params: list[Any] = []
-        where.append("task_visible = 1")
+        if not include_hidden:
+            where.append("task_visible = 1")
         self._append_job_filters(
             where,
             params,
@@ -776,13 +817,11 @@ class MetadataDatabase:
             ).fetchall()
         return [self._row_to_public_job(row) for row in rows], total
 
-    def has_async_jobs(self, *, is_admin: bool, api_key_id: str) -> bool:
+    def has_async_jobs(self, *, is_admin: bool, api_key_id: str, include_hidden: bool = False) -> bool:
         where: list[str] = []
         params: list[Any] = []
-        where.append("task_visible = 1")
-        if not is_admin:
-            where.append("api_key_id = ?")
-            params.append(api_key_id)
+        if not include_hidden:
+            where.append("task_visible = 1")
         where_sql = self._where_sql(where)
         with self._lock, self._connect() as connection:
             row = connection.execute(f"SELECT 1 FROM async_jobs {where_sql} LIMIT 1", params).fetchone()
@@ -791,21 +830,16 @@ class MetadataDatabase:
     def has_any_async_job_records(self, *, is_admin: bool, api_key_id: str) -> bool:
         where: list[str] = []
         params: list[Any] = []
-        if not is_admin:
-            where.append("api_key_id = ?")
-            params.append(api_key_id)
         where_sql = self._where_sql(where)
         with self._lock, self._connect() as connection:
             row = connection.execute(f"SELECT 1 FROM async_jobs {where_sql} LIMIT 1", params).fetchone()
         return row is not None
 
-    def summarize_async_jobs(self, *, is_admin: bool, api_key_id: str) -> dict[str, int]:
+    def summarize_async_jobs(self, *, is_admin: bool, api_key_id: str, include_hidden: bool = False) -> dict[str, int]:
         where: list[str] = []
         params: list[Any] = []
-        where.append("task_visible = 1")
-        if not is_admin:
-            where.append("api_key_id = ?")
-            params.append(api_key_id)
+        if not include_hidden:
+            where.append("task_visible = 1")
         where_sql = self._where_sql(where)
         summary = {
             "total": 0,
@@ -837,17 +871,16 @@ class MetadataDatabase:
             query: str | None = None,
             sort: str | None = None,
             order: str | None = None,
+            include_hidden: bool = False,
     ) -> tuple[list[dict[str, Any]], int]:
         limit_value = max(1, min(int(limit or 20), 100))
         offset_value = max(0, int(offset or 0))
-        sort_column = self._safe_sort(sort, {"created_at", "updated_at", "model", "type"}, "updated_at")
+        sort_column = self._safe_sort(sort, {"created_at", "updated_at", "model", "type"}, "created_at")
         direction = "ASC" if str(order or "").lower() == "asc" else "DESC"
         where: list[str] = []
         params: list[Any] = []
-        where.append("gallery_visible = 1")
-        if not is_admin:
-            where.append("api_key_id = ?")
-            params.append(api_key_id)
+        if not include_hidden:
+            where.append("gallery_visible = 1")
         cleaned_query = str(query or "").strip()
         if cleaned_query:
             like = f"%{cleaned_query}%"
@@ -872,6 +905,7 @@ class MetadataDatabase:
                     MAX(updated_at) AS updated_at,
                     MAX(api_key_id) AS api_key_id,
                     MAX(api_key_name) AS api_key_name,
+                    MAX(payload_json) AS payload_json,
                     COUNT(*) AS result_count
                 FROM gallery_images
                 {where_sql}
@@ -888,7 +922,7 @@ class MetadataDatabase:
                 image_rows = connection.execute(
                     f"""
                     SELECT * FROM gallery_images
-                    WHERE job_id IN ({placeholders}) AND gallery_visible = 1
+                    WHERE job_id IN ({placeholders}){" " if include_hidden else " AND gallery_visible = 1"}
                     ORDER BY job_id, image_index ASC
                     """,
                     job_ids,
@@ -914,6 +948,7 @@ class MetadataDatabase:
         items: list[dict[str, Any]] = []
         for row in job_rows:
             job_id = str(row["job_id"])
+            payload = self._decode_json_object(row["payload_json"])
             items.append({
                 "id": job_id,
                 "type": row["type"],
@@ -924,6 +959,7 @@ class MetadataDatabase:
                 "log_path": None,
                 "api_key_id": row["api_key_id"],
                 "api_key_name": row["api_key_name"],
+                "prompt": self._extract_prompt_text(payload),
                 "prompt_preview": row["prompt_preview"],
                 "requested_count": int(row["result_count"] or 0),
                 "size": None,
@@ -944,15 +980,22 @@ class MetadataDatabase:
             offset: int = 0,
             query: str | None = None,
             include_blocked: bool = False,
+            sort: str | None = None,
+            order: str | None = None,
+            include_hidden: bool = False,
     ) -> tuple[list[dict[str, Any]], int]:
         limit_value = max(1, min(int(limit or 40), 100))
         offset_value = max(0, int(offset or 0))
+        sort_column = self._safe_sort(
+            sort,
+            {"created_at", "updated_at", "model", "type", "is_pinned", "is_recommended", "is_blocked"},
+            "created_at",
+        )
+        direction = "ASC" if str(order or "").lower() == "asc" else "DESC"
         where: list[str] = []
         params: list[Any] = []
-        where.append("wall_visible = 1")
-        if not is_admin:
-            where.append("api_key_id = ?")
-            params.append(api_key_id)
+        if not include_hidden:
+            where.append("wall_visible = 1")
         if not include_blocked:
             where.append("is_blocked = 0")
         cleaned_query = str(query or "").strip()
@@ -967,7 +1010,7 @@ class MetadataDatabase:
                 f"""
                 SELECT * FROM gallery_images
                 {where_sql}
-                ORDER BY is_pinned DESC, is_recommended DESC, updated_at DESC, id DESC
+                ORDER BY {sort_column} {direction}, id {direction}
                 LIMIT ? OFFSET ?
                 """,
                 [*params, limit_value, offset_value],
@@ -975,12 +1018,14 @@ class MetadataDatabase:
         items: list[dict[str, Any]] = []
         for row in rows:
             job_id = str(row["job_id"])
+            payload = self._decode_json_object(row["payload_json"])
             items.append({
                 "id": row["image_id"] or f"{job_id}-{row['image_index']}",
                 "job_id": job_id,
                 "image_index": int(row["image_index"] or 0),
                 "type": row["type"],
                 "model": row["model"],
+                "prompt": self._extract_prompt_text(payload),
                 "prompt_preview": row["prompt_preview"],
                 "created_at": row["created_at"],
                 "updated_at": row["updated_at"],

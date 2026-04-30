@@ -149,6 +149,7 @@ export type PreviewImageItem = {
   image_index?: number;
   type?: string | null;
   model?: string | null;
+  prompt?: string | null;
   prompt_preview?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
@@ -202,6 +203,7 @@ export type AsyncJobItem = {
   log_path?: string | null;
   api_key_id?: string | null;
   api_key_name?: string | null;
+  prompt?: string | null;
   prompt_preview?: string | null;
   requested_count?: number;
   size?: string | null;
@@ -473,6 +475,7 @@ export async function fetchAsyncJobs(params?: {
   query?: string;
   sort?: string;
   order?: string;
+  include_hidden?: boolean;
 }) {
   const query = new URLSearchParams();
   if (params?.limit) {
@@ -496,6 +499,9 @@ export async function fetchAsyncJobs(params?: {
   if (params?.order) {
     query.set("order", params.order);
   }
+  if (typeof params?.include_hidden === "boolean") {
+    query.set("include_hidden", String(params.include_hidden));
+  }
   const suffix = query.size > 0 ? `?${query.toString()}` : "";
   return httpRequest<PaginatedAsyncJobsResponse>(`/api/async/jobs${suffix}`);
 }
@@ -506,6 +512,7 @@ export async function fetchGalleryJobs(params?: {
   query?: string;
   sort?: string;
   order?: string;
+  include_hidden?: boolean;
 }) {
   const query = new URLSearchParams();
   if (params?.limit) {
@@ -523,6 +530,9 @@ export async function fetchGalleryJobs(params?: {
   if (params?.order) {
     query.set("order", params.order);
   }
+  if (typeof params?.include_hidden === "boolean") {
+    query.set("include_hidden", String(params.include_hidden));
+  }
   const suffix = query.size > 0 ? `?${query.toString()}` : "";
   return httpRequest<PaginatedGalleryResponse>(`/api/gallery${suffix}`);
 }
@@ -532,6 +542,9 @@ export async function fetchWaterfallImages(params?: {
   offset?: number;
   query?: string;
   include_blocked?: boolean;
+  sort?: string;
+  order?: string;
+  include_hidden?: boolean;
 }) {
   const query = new URLSearchParams();
   if (params?.limit) {
@@ -543,8 +556,17 @@ export async function fetchWaterfallImages(params?: {
   if (params?.query?.trim()) {
     query.set("query", params.query.trim());
   }
-  if (params?.include_blocked) {
-    query.set("include_blocked", "true");
+  if (typeof params?.include_blocked === "boolean") {
+    query.set("include_blocked", String(params.include_blocked));
+  }
+  if (params?.sort) {
+    query.set("sort", params.sort);
+  }
+  if (params?.order) {
+    query.set("order", params.order);
+  }
+  if (typeof params?.include_hidden === "boolean") {
+    query.set("include_hidden", String(params.include_hidden));
   }
   const suffix = query.size > 0 ? `?${query.toString()}` : "";
   return httpRequest<PaginatedWaterfallResponse>(`/api/gallery/wall${suffix}`);

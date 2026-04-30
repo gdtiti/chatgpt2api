@@ -9,6 +9,7 @@ import { CPAPoolsCard } from "./components/cpa-pools-card";
 import { DataStorageCard } from "./components/data-storage-card";
 import { ImageRuntimeCard } from "./components/image-runtime-card";
 import { ImportBrowserDialog } from "./components/import-browser-dialog";
+import { MaintenanceCard } from "./components/maintenance-card";
 import { SettingsHeader } from "./components/settings-header";
 import { Sub2APIConnections } from "./components/sub2api-connections";
 import { useSettingsStore } from "./store";
@@ -66,6 +67,7 @@ export default function SettingsPage() {
         <ConfigCard />
         <ImageRuntimeCard />
         <DataStorageCard />
+        <MaintenanceCard />
         <APIKeysCard />
         <CPAPoolsCard />
         <Sub2APIConnections />

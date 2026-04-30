@@ -410,6 +410,76 @@ def guess_media_type(path: Path) -> str:
     return mimetypes.guess_type(path.name)[0] or "application/octet-stream"
 
 
+def list_recent_image_files(limit: int = 24) -> dict[str, Any]:
+    image_root = _image_storage_dir()
+    limit_value = max(1, min(int(limit or 24), 100))
+    originals: list[Path] = []
+    all_files = 0
+    if image_root.exists():
+        for date_dir in image_root.iterdir():
+            if not date_dir.is_dir() or not _DATE_DIR_RE.fullmatch(date_dir.name):
+                continue
+            for path in date_dir.iterdir():
+                if not path.is_file():
+                    continue
+                all_files += 1
+                if path.stem.endswith("-thumb") or path.stem.endswith("-wall"):
+                    continue
+                if (mimetypes.guess_type(path.name)[0] or "").startswith("image/"):
+                    originals.append(path)
+    originals.sort(key=lambda item: item.stat().st_mtime, reverse=True)
+    items: list[dict[str, Any]] = []
+    for path in originals[:limit_value]:
+        date_segment = path.parent.name
+        file_name = path.name
+        thumb_name = _thumbnail_file_name(file_name)
+        wall_name = _wall_thumbnail_file_name(file_name)
+        thumb_path = path.with_name(thumb_name)
+        wall_path = path.with_name(wall_name)
+        url = build_image_url(date_segment, file_name, config.base_url or None)
+        thumbnail_url = build_image_url(date_segment, thumb_name, config.base_url or None) if thumb_path.is_file() else url
+        wall_url = build_image_url(date_segment, wall_name, config.base_url or None) if wall_path.is_file() else thumbnail_url
+        items.append({
+            "date": date_segment,
+            "file_name": file_name,
+            "relative_path": f"{date_segment}/{file_name}",
+            "url": url,
+            "thumbnail_url": thumbnail_url,
+            "wall_url": wall_url,
+            "bytes": path.stat().st_size,
+            "modified_at": datetime.fromtimestamp(path.stat().st_mtime).replace(microsecond=0).isoformat(),
+        })
+    return {
+        "root": str(image_root),
+        "total_files": all_files,
+        "total_originals": len(originals),
+        "limit": limit_value,
+        "items": items,
+    }
+
+
+def read_system_log_tail(lines: int = 200) -> dict[str, Any]:
+    path = config.system_log_file
+    line_limit = max(1, min(int(lines or 200), 1000))
+    if not path.is_file():
+        return {
+            "path": str(path),
+            "exists": False,
+            "bytes": 0,
+            "lines": [],
+        }
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        content = []
+    return {
+        "path": str(path),
+        "exists": True,
+        "bytes": path.stat().st_size,
+        "lines": content[-line_limit:],
+    }
+
+
 class DataMaintenanceService:
     def __init__(self) -> None:
         self._lock = Lock()

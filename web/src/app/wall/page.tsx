@@ -54,7 +54,7 @@ export default function WaterfallPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [updatingKey, setUpdatingKey] = useState<string | null>(null);
   const [page, setPage] = useState(1);
-  const [limit] = useState(40);
+  const [limit, setLimit] = useState("80");
   const [total, setTotal] = useState(0);
   const [queryInput, setQueryInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
@@ -64,7 +64,8 @@ export default function WaterfallPage() {
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const [lightboxOpen, setLightboxOpen] = useState(false);
 
-  const pageCount = Math.max(1, Math.ceil(total / limit));
+  const pageSize = Math.max(1, Number(limit) || 80);
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const [sort, order] = sortOption.split(":");
 
   const loadItems = async (silent = false) => {
@@ -73,8 +74,8 @@ export default function WaterfallPage() {
     }
     try {
       const response = await fetchWaterfallImages({
-        limit,
-        offset: (page - 1) * limit,
+        limit: pageSize,
+        offset: (page - 1) * pageSize,
         query: searchQuery,
         include_blocked: includeBlocked,
         sort,
@@ -105,11 +106,11 @@ export default function WaterfallPage() {
       return;
     }
     void loadItems();
-  }, [page, searchQuery, includeBlocked, sortOption]);
+  }, [page, searchQuery, includeBlocked, sortOption, limit]);
 
   useEffect(() => {
     setPage(1);
-  }, [searchQuery, includeBlocked, sortOption]);
+  }, [searchQuery, includeBlocked, sortOption, limit]);
 
   const patchItem = async (
     item: PreviewImageItem,
@@ -207,6 +208,18 @@ export default function WaterfallPage() {
                     <SelectItem value="is_pinned:desc">置顶优先</SelectItem>
                     <SelectItem value="is_recommended:desc">推荐优先</SelectItem>
                     <SelectItem value="model:asc">模型排序</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select value={limit} onValueChange={setLimit}>
+                  <SelectTrigger className="h-10 w-[120px] rounded-xl border-stone-200 bg-white">
+                    <SelectValue placeholder="每页数量" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {["40", "80", "100"].map((item) => (
+                      <SelectItem key={item} value={item}>
+                        {item} 张
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>

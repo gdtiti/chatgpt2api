@@ -1108,6 +1108,154 @@ class MetadataDatabase:
                 (job_id, log_path, updated_at),
             )
 
+    def recovery_snapshot(self) -> dict[str, Any]:
+        with self._lock, self._connect() as connection:
+            async_job_ids = {
+                str(row["job_id"])
+                for row in connection.execute("SELECT job_id FROM async_jobs").fetchall()
+                if str(row["job_id"] or "").strip()
+            }
+            gallery_keys: set[tuple[str, int]] = set()
+            gallery_relative_paths: set[str] = set()
+            for row in connection.execute(
+                    "SELECT job_id, image_index, relative_path FROM gallery_images"
+            ).fetchall():
+                job_id = str(row["job_id"] or "").strip()
+                if job_id:
+                    gallery_keys.add((job_id, int(row["image_index"] or 0)))
+                relative_path = str(row["relative_path"] or "").strip()
+                if relative_path:
+                    gallery_relative_paths.add(relative_path)
+            task_log_ids = {
+                str(row["job_id"])
+                for row in connection.execute("SELECT job_id FROM task_logs").fetchall()
+                if str(row["job_id"] or "").strip()
+            }
+        return {
+            "async_job_ids": async_job_ids,
+            "gallery_keys": gallery_keys,
+            "gallery_relative_paths": gallery_relative_paths,
+            "task_log_ids": task_log_ids,
+            "counts": {
+                "async_jobs": len(async_job_ids),
+                "gallery_images": len(gallery_keys),
+                "task_logs": len(task_log_ids),
+            },
+        }
+
+    def recover_records(
+            self,
+            *,
+            jobs: list[dict[str, Any]],
+            gallery_images: list[dict[str, Any]],
+            task_logs: list[dict[str, Any]],
+    ) -> dict[str, int]:
+        recorded_at = _utc_now()
+        inserted_jobs = 0
+        inserted_gallery_images = 0
+        inserted_task_logs = 0
+        with self._lock, self._connect() as connection:
+            for job in jobs:
+                job_id = str(job.get("id") or "").strip()
+                if not job_id:
+                    continue
+                preview_images = job.get("preview_images") if isinstance(job.get("preview_images"), list) else []
+                payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
+                result = job.get("result") if isinstance(job.get("result"), dict) else None
+                cursor = connection.execute(
+                    """
+                    INSERT OR IGNORE INTO async_jobs(
+                        job_id, type, status, model, created_at, updated_at, api_key_id, api_key_name,
+                        prompt_preview, requested_count, size, input_image_count, result_ready, result_count,
+                        error_message, log_path, result_path, result_json, task_visible, preview_images_json, payload_json, recorded_at
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        job_id,
+                        str(job.get("type") or "images.generations"),
+                        str(job.get("status") or "succeeded"),
+                        str(job.get("model") or "recovered"),
+                        str(job.get("created_at") or recorded_at),
+                        str(job.get("updated_at") or job.get("created_at") or recorded_at),
+                        str(job.get("api_key_id") or "") or None,
+                        str(job.get("api_key_name") or "") or None,
+                        str(job.get("prompt_preview") or "") or None,
+                        int(job.get("requested_count") or 0),
+                        str(job.get("size") or "") or None,
+                        int(job.get("input_image_count") or 0),
+                        1 if job.get("result_ready", True) else 0,
+                        int(job.get("result_count") or len(preview_images) or 0),
+                        str(((job.get("error") or {}) if isinstance(job.get("error"), dict) else {}).get("message") or "") or None,
+                        str(job.get("log_path") or "") or None,
+                        str(job.get("result_path") or "") or None,
+                        json.dumps(result, ensure_ascii=False) if result is not None else None,
+                        1,
+                        json.dumps(preview_images, ensure_ascii=False),
+                        json.dumps(payload, ensure_ascii=False),
+                        recorded_at,
+                    ),
+                )
+                inserted_jobs += max(0, int(cursor.rowcount or 0))
+
+            for item in gallery_images:
+                job_id = str(item.get("job_id") or "").strip()
+                image_index = int(item.get("image_index") or 0)
+                src = str(item.get("src") or item.get("thumbnail_url") or item.get("url") or "").strip()
+                if not job_id or image_index <= 0 or not src:
+                    continue
+                payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+                cursor = connection.execute(
+                    """
+                    INSERT OR IGNORE INTO gallery_images(
+                        job_id, image_index, image_id, type, model, prompt_preview, created_at, updated_at,
+                        api_key_id, api_key_name, src, url, thumbnail_url, relative_path, thumbnail_relative_path,
+                        wall_url, wall_relative_path, gallery_visible, wall_visible, markdown, is_recommended, is_pinned, is_blocked,
+                        payload_json, recorded_at
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?)
+                    """,
+                    (
+                        job_id,
+                        image_index,
+                        str(item.get("id") or "") or None,
+                        str(item.get("type") or "images.generations"),
+                        str(item.get("model") or "recovered"),
+                        str(item.get("prompt_preview") or "") or None,
+                        str(item.get("created_at") or recorded_at),
+                        str(item.get("updated_at") or item.get("created_at") or recorded_at),
+                        str(item.get("api_key_id") or "") or None,
+                        str(item.get("api_key_name") or "") or None,
+                        src,
+                        str(item.get("url") or "") or None,
+                        str(item.get("thumbnail_url") or "") or None,
+                        str(item.get("relative_path") or "") or None,
+                        str(item.get("thumbnail_relative_path") or "") or None,
+                        str(item.get("wall_url") or "") or None,
+                        str(item.get("wall_relative_path") or "") or None,
+                        1 if item.get("gallery_visible", True) else 0,
+                        1 if item.get("wall_visible", True) else 0,
+                        str(item.get("markdown") or "") or None,
+                        json.dumps(payload, ensure_ascii=False),
+                        recorded_at,
+                    ),
+                )
+                inserted_gallery_images += max(0, int(cursor.rowcount or 0))
+
+            for item in task_logs:
+                job_id = str(item.get("job_id") or "").strip()
+                log_path = str(item.get("log_path") or "").strip()
+                if not job_id or not log_path:
+                    continue
+                cursor = connection.execute(
+                    "INSERT OR IGNORE INTO task_logs(job_id, log_path, updated_at) VALUES(?, ?, ?)",
+                    (job_id, log_path, str(item.get("updated_at") or recorded_at)),
+                )
+                inserted_task_logs += max(0, int(cursor.rowcount or 0))
+        return {
+            "async_jobs": inserted_jobs,
+            "gallery_images": inserted_gallery_images,
+            "task_logs": inserted_task_logs,
+        }
+
     def record_system_file(self, kind: str, file_path: str) -> None:
         updated_at = _utc_now()
         with self._lock, self._connect() as connection:

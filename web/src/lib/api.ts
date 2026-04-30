@@ -274,6 +274,63 @@ export type DataCleanupResult = {
   stats: DataStats;
 };
 
+export type SystemLogTail = {
+  path: string;
+  exists: boolean;
+  bytes: number;
+  lines: string[];
+};
+
+export type ManagedImageItem = {
+  date: string;
+  file_name: string;
+  relative_path: string;
+  url: string;
+  thumbnail_url: string;
+  wall_url: string;
+  bytes: number;
+  modified_at: string;
+};
+
+export type ImageManagementResponse = {
+  root: string;
+  total_files: number;
+  total_originals: number;
+  limit: number;
+  items: ManagedImageItem[];
+};
+
+export type HistoryRecoveryReport = {
+  generated_at: string;
+  existing: {
+    async_jobs: number;
+    gallery_images: number;
+    task_logs: number;
+  };
+  candidates: {
+    async_jobs: number;
+    gallery_images: number;
+    task_logs: number;
+  };
+  source_counts: Record<string, number>;
+  samples: {
+    jobs: string[];
+    images: string[];
+    task_logs: string[];
+  };
+};
+
+export type HistoryRecoveryApplyResult = {
+  applied_at: string;
+  inserted: {
+    async_jobs: number;
+    gallery_images: number;
+    task_logs: number;
+  };
+  before: HistoryRecoveryReport;
+  after: HistoryRecoveryReport;
+};
+
 export async function login(authKey: string) {
   const normalizedAuthKey = String(authKey || "").trim();
   return httpRequest<{ ok: boolean; version: string; session: AuthSession }>("/auth/login", {
@@ -402,6 +459,28 @@ export async function fetchDataStats() {
 
 export async function runDataCleanup() {
   return httpRequest<{ result: DataCleanupResult }>("/api/data/cleanup", {
+    method: "POST",
+  });
+}
+
+export async function fetchSystemLogTail(lines = 200) {
+  return httpRequest<{ log: SystemLogTail }>(`/api/logs/system?lines=${encodeURIComponent(String(lines))}`);
+}
+
+export async function fetchImageManagement(limit = 24) {
+  return httpRequest<{ images: ImageManagementResponse }>(
+    `/api/images/management?limit=${encodeURIComponent(String(limit))}`,
+  );
+}
+
+export async function scanHistoryRecovery() {
+  return httpRequest<{ report: HistoryRecoveryReport }>("/api/system/recovery/scan", {
+    method: "POST",
+  });
+}
+
+export async function applyHistoryRecovery() {
+  return httpRequest<{ result: HistoryRecoveryApplyResult }>("/api/system/recovery/apply", {
     method: "POST",
   });
 }

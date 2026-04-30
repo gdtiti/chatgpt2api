@@ -53,7 +53,7 @@ export default function GalleryPage() {
   const [jobs, setJobs] = useState<AsyncJobItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [page, setPage] = useState(1);
-  const [limit] = useState(20);
+  const [limit, setLimit] = useState("50");
   const [total, setTotal] = useState(0);
   const [queryInput, setQueryInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
@@ -67,7 +67,8 @@ export default function GalleryPage() {
       jobs.filter((job) => job.status === "succeeded" && galleryItemsFromJob(job).length > 0),
     [jobs],
   );
-  const pageCount = Math.max(1, Math.ceil(total / limit));
+  const pageSize = Math.max(1, Number(limit) || 50);
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const [sort, order] = sortOption.split(":");
 
   const loadJobs = async (silent = false) => {
@@ -76,8 +77,8 @@ export default function GalleryPage() {
     }
     try {
       const response = await fetchGalleryJobs({
-        limit,
-        offset: (page - 1) * limit,
+        limit: pageSize,
+        offset: (page - 1) * pageSize,
         query: searchQuery,
         sort,
         order,
@@ -107,11 +108,11 @@ export default function GalleryPage() {
       return;
     }
     void loadJobs();
-  }, [page, searchQuery, sortOption]);
+  }, [page, searchQuery, sortOption, limit]);
 
   useEffect(() => {
     setPage(1);
-  }, [searchQuery, sortOption]);
+  }, [searchQuery, sortOption, limit]);
 
   return (
     <>
@@ -169,6 +170,18 @@ export default function GalleryPage() {
                     <SelectItem value="updated_at:asc">最早更新</SelectItem>
                     <SelectItem value="model:asc">模型排序</SelectItem>
                     <SelectItem value="type:asc">类型排序</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select value={limit} onValueChange={setLimit}>
+                  <SelectTrigger className="h-10 w-[120px] rounded-xl border-stone-200 bg-white">
+                    <SelectValue placeholder="每页数量" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {["20", "50", "100"].map((item) => (
+                      <SelectItem key={item} value={item}>
+                        {item} 条
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>

@@ -8,7 +8,14 @@ from pydantic import BaseModel, ConfigDict
 from api.support import require_auth_key, require_session_principal
 from services.api_key_service import api_key_service
 from services.config import config
-from services.data_service import data_maintenance_service, guess_media_type, resolve_image_path
+from services.data_service import (
+    data_maintenance_service,
+    guess_media_type,
+    list_recent_image_files,
+    read_system_log_tail,
+    resolve_image_path,
+)
+from services.history_recovery_service import history_recovery_service
 from services.proxy_service import test_proxy
 
 
@@ -72,6 +79,26 @@ def create_router(app_version: str) -> APIRouter:
     async def cleanup_data(authorization: str | None = Header(default=None)):
         require_auth_key(authorization)
         return {"result": await run_in_threadpool(data_maintenance_service.cleanup, force=True)}
+
+    @router.get("/api/logs/system")
+    async def get_system_log_tail(authorization: str | None = Header(default=None), lines: int = 200):
+        require_auth_key(authorization)
+        return {"log": await run_in_threadpool(read_system_log_tail, lines)}
+
+    @router.get("/api/images/management")
+    async def get_image_management(authorization: str | None = Header(default=None), limit: int = 24):
+        require_auth_key(authorization)
+        return {"images": await run_in_threadpool(list_recent_image_files, limit)}
+
+    @router.post("/api/system/recovery/scan")
+    async def scan_history_recovery(authorization: str | None = Header(default=None)):
+        require_auth_key(authorization)
+        return {"report": await run_in_threadpool(history_recovery_service.scan_report)}
+
+    @router.post("/api/system/recovery/apply")
+    async def apply_history_recovery(authorization: str | None = Header(default=None)):
+        require_auth_key(authorization)
+        return {"result": await run_in_threadpool(history_recovery_service.apply)}
 
     @router.post("/api/proxy/test")
     async def test_proxy_endpoint(body: ProxyTestRequest, authorization: str | None = Header(default=None)):
